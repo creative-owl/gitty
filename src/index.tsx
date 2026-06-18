@@ -167,6 +167,7 @@ const STATUS_OVERLAY_MAX_WIDTH = 56
 const STATUS_OVERLAY_MIN_WIDTH = 24
 
 const MACCHIATO = {
+  blue: "#8aadf4",
   green: "#a6da95",
   mauve: "#c6a0f6",
   lavender: "#b7bdf8",
@@ -712,6 +713,50 @@ function summarizeGhError(stderr: string): string {
     return "Authenticate gh to show PRs."
   }
   return detail
+}
+
+function openExternalUrl(url: string): string | undefined {
+  const trimmedUrl = url.trim()
+  if (!/^https?:\/\//i.test(trimmedUrl)) {
+    return "No browser URL available for this PR."
+  }
+
+  const command = createExternalUrlCommand(trimmedUrl)
+  if (!command) {
+    return "Opening URLs is not supported on this platform."
+  }
+
+  try {
+    const result = Bun.spawnSync(command, {
+      stderr: "pipe",
+      stdin: "ignore",
+      stdout: "ignore",
+    })
+
+    if (result.exitCode === 0) {
+      return undefined
+    }
+
+    return result.stderr.toString().trim().split("\n").find(Boolean) || "Could not open PR URL."
+  } catch {
+    return "Could not open PR URL."
+  }
+}
+
+function createExternalUrlCommand(url: string): string[] | undefined {
+  if (process.platform === "darwin") {
+    return ["open", url]
+  }
+
+  if (process.platform === "win32") {
+    return ["cmd.exe", "/c", "start", "", url]
+  }
+
+  if (process.platform === "linux") {
+    return ["xdg-open", url]
+  }
+
+  return undefined
 }
 
 function parsePullRequestSummaries(stdout: string): PullRequestSummary[] {
@@ -1675,10 +1720,12 @@ function StatusOverlay({
 
 function PullRequestPane({
   detailState,
+  onOpenUrl,
   summary,
   width,
 }: {
   detailState?: PullRequestDetailState
+  onOpenUrl: (url: string) => void
   summary?: PullRequestSummary
   width: number
 }) {
@@ -1691,7 +1738,7 @@ function PullRequestPane({
 
   return (
     <box style={{ width, height: "100%", flexDirection: "row" }}>
-      <PullRequestContentPane detailState={detailState} summary={summary} width={contentWidth} />
+      <PullRequestContentPane detailState={detailState} onOpenUrl={onOpenUrl} summary={summary} width={contentWidth} />
       {sidebarWidth > 0 ? (
         <>
           <box style={{ width: 1, height: "100%" }} />
@@ -1704,10 +1751,12 @@ function PullRequestPane({
 
 function PullRequestContentPane({
   detailState,
+  onOpenUrl,
   summary,
   width,
 }: {
   detailState?: PullRequestDetailState
+  onOpenUrl: (url: string) => void
   summary?: PullRequestSummary
   width: number
 }) {
@@ -1771,7 +1820,7 @@ function PullRequestContentPane({
       }}
     >
       <scrollbox style={{ width: "100%", height: "100%" }} scrollY>
-        <PullRequestTitleBlock detail={detail} width={contentWidth} />
+        <PullRequestTitleBlock detail={detail} onOpenUrl={onOpenUrl} width={contentWidth} />
         <DescriptionMarkdownBlock rows={descriptionRows} width={contentWidth} />
         <CommentChain comments={detail.comments} width={contentWidth} />
       </scrollbox>
@@ -1781,14 +1830,22 @@ function PullRequestContentPane({
 
 function PullRequestTitleBlock({
   detail,
+  onOpenUrl,
   width,
 }: {
   detail: PullRequestDetail
+  onOpenUrl: (url: string) => void
   width: number
 }) {
   const contentWidth = Math.max(1, width - 4)
   const titleRows = wrapText(detail.title, contentWidth)
-  const height = Math.max(4, titleRows.length + 3)
+  const url = detail.url.trim()
+  const height = Math.max(2, titleRows.length + (url ? 1 : 0))
+  const openUrl = (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    onOpenUrl(url)
+  }
 
   return (
     <box
@@ -1801,20 +1858,16 @@ function PullRequestTitleBlock({
         paddingRight: 1,
       }}
     >
-      <box style={{ width: "100%", height: 1 }}>
-        <text fg={MACCHIATO.subtext0}>{fitText(`Pull request #${detail.number}`, contentWidth)}</text>
-      </box>
       {titleRows.map((row, index) => (
         <box key={`pull-request-title-row:${index}`} style={{ width: "100%", height: 1 }}>
           <text fg={MACCHIATO.lavender}>{fitText(row, contentWidth)}</text>
         </box>
       ))}
-      <box style={{ width: "100%", height: 1 }}>
-        <text fg={MACCHIATO.subtext0}>{fitText(`Opened by ${detail.author}`, contentWidth)}</text>
-      </box>
-      <box style={{ width: "100%", height: 1 }}>
-        <text fg={MACCHIATO.subtext0}>{fitText(detail.url, contentWidth)}</text>
-      </box>
+      {url ? (
+        <box style={{ width: "100%", height: 1, backgroundColor: MACCHIATO.surface0 }} onMouseUp={openUrl}>
+          <text fg={MACCHIATO.blue}>{fitText(url, contentWidth)}</text>
+        </box>
+      ) : null}
     </box>
   )
 }
@@ -2312,6 +2365,13 @@ function DiffApp({
     })
   }
 
+  function openPullRequestUrl(url: string) {
+    const message = openExternalUrl(url)
+    setStatus({
+      text: message ?? "Opening pull request in browser.",
+    })
+  }
+
   function submitOpenRepository(input: string) {
     const directory = input.trim()
     if (!directory) {
@@ -2495,6 +2555,7 @@ function DiffApp({
         {activePane.kind === "pull-request" && activeRepository ? (
           <PullRequestPane
             detailState={activePullRequestDetailState}
+            onOpenUrl={openPullRequestUrl}
             summary={activePullRequestSummary}
             width={gitPaneWidth}
           />

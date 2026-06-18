@@ -35,7 +35,7 @@ Inside the TUI:
 - In the open repository dialog, use `Up`/`Down` to pick a directory and `Tab` to complete it.
 - `Tab` cycles repositories.
 - Click any repository in the sidebar to switch to it.
-- Click a PR in the sidebar to open its description and comment chain.
+- Click a PR in the sidebar to open its description and comment chain. Click the PR URL in the detail header to open it in your browser.
 - Click the `x` beside a repository in the sidebar to close it.
 - Line wrapping is always on.
 - Status messages appear in a bottom-right overlay so command controls stay visible.
