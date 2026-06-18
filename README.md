@@ -16,22 +16,29 @@ bun run start
 ```
 
 With no input, Gitty shows the current `git diff` plus untracked files when
-changes exist, otherwise it opens a sample patch.
+changes exist. If the repo is clean, the repository opens with an empty Working
+changes view.
 
-You can also pass a patch file, read from stdin, or view staged changes:
+You can add multiple git repositories, pass a patch file, read from stdin,
+or view staged changes:
 
 ```bash
 bun run start -- path/to/change.patch
+bun run start -- --repository ../repo-a --repository ../repo-b
 git diff | bun run start
 bun run diff:staged
 ```
 
 Inside the TUI:
 
-- `s` toggles split/stack layout.
-- `w` toggles line wrapping.
-- `h` toggles the file sidebar.
+- `Tab` cycles repositories.
+- Line wrapping is always on.
+- The left sidebar lists repositories, each with a `Working changes` menu item.
+- The git diff UI lives inside a swappable pane and always renders split diffs.
 - `q`, `Esc`, or `Ctrl+C` exits.
+
+Gitty defaults to Catppuccin Macchiato for the app shell and Hunk diff theme.
+You can still pass `--theme <name>` to try another Hunk theme.
 
 ## Notes
 
