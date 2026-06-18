@@ -1206,10 +1206,14 @@ function pushWrappedRows(
   }
 }
 
-function createMarkdownRows(markdown: string, width: number): TextRow[] {
-  const source = markdown.trim()
-  if (!source) {
-    return [{ color: MACCHIATO.subtext0, text: "No description." }]
+function stripHtmlComments(value: string) {
+  return value.replace(/<!--[\s\S]*?-->/g, "")
+}
+
+function createMarkdownRows(markdown: string, width: number, emptyText = "No description."): TextRow[] {
+  const source = stripHtmlComments(markdown)
+  if (!source.trim()) {
+    return [{ color: MACCHIATO.subtext0, text: emptyText }]
   }
 
   const rows: TextRow[] = []
@@ -1243,7 +1247,7 @@ function createMarkdownRows(markdown: string, width: number): TextRow[] {
     })
   }
 
-  for (const rawLine of markdown.replace(/\r\n/g, "\n").split("\n")) {
+  for (const rawLine of source.replace(/\r\n/g, "\n").split("\n")) {
     const line = rawLine.trimEnd()
     const trimmedLine = line.trim()
 
@@ -2044,9 +2048,7 @@ function createCommentBlockHeight(comment: PullRequestTimelineItem, width: numbe
 }
 
 function createCommentBodyRows(comment: PullRequestTimelineItem, width: number): TextRow[] {
-  const rows: TextRow[] = []
-  pushWrappedRows(rows, comment.body.trim() || "No content.", width, comment.body.trim() ? MACCHIATO.text : MACCHIATO.subtext0)
-  return rows
+  return createMarkdownRows(comment.body, width, "No content.")
 }
 
 function formatCommentHeading(comment: PullRequestTimelineItem) {
