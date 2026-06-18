@@ -35,11 +35,12 @@ Inside the TUI:
 - In the open repository dialog, use `Up`/`Down` to pick a directory and `Tab` to complete it.
 - `Tab` cycles repositories.
 - Click any repository in the sidebar to switch to it.
+- Click a PR in the sidebar to open its description and comment chain.
 - Click the `x` beside a repository in the sidebar to close it.
 - Line wrapping is always on.
 - Status messages appear in a bottom-right overlay so command controls stay visible.
 - The left sidebar lists repositories, each with a `Working changes` menu item.
-- For GitHub repositories, the sidebar also lists open PRs split into `Opened by you` and `Needs review`, with check status dots and changes-requested notices.
+- For GitHub repositories, the sidebar also lists open PRs split into `Opened by you` and `Needs review`, with check status dots and changes-requested notices. PR detail views render a prominent plain title, the description as Markdown in its own block, right-aligned comment blocks, and reviewers, assignees, and labels in a right sidebar.
 - The git diff UI lives inside a swappable pane and always renders split diffs.
 - `q`, `Esc`, or `Ctrl+C` exits.
 

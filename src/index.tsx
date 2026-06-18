@@ -29,6 +29,7 @@ type RepositoryView = {
   name: string
   path: string
   files: HunkDiffFile[]
+  pullRequestDetails?: Record<number, PullRequestDetailState>
   pullRequests?: RepositoryPullRequests
   stats: {
     additions: number
@@ -54,13 +55,62 @@ type PathSuggestion = {
   value: string
 }
 
+type ActivePane =
+  | {
+      kind: "working"
+      repositoryId: string
+    }
+  | {
+      kind: "pull-request"
+      pullRequestNumber: number
+      repositoryId: string
+    }
+
 type PullRequestCheckState = "failed" | "running" | "passed"
 
 type PullRequestSidebarRow = {
   color: string
+  pullRequest?: PullRequestSummary
   rightColor?: string
   rightText?: string
   text: string
+}
+
+type PullRequestDetailState =
+  | {
+      status: "loading"
+    }
+  | {
+      detail: PullRequestDetail
+      status: "loaded"
+    }
+  | {
+      message: string
+      status: "unavailable"
+    }
+
+type PullRequestDetail = {
+  assignees: string[]
+  author: string
+  body: string
+  checkState: PullRequestCheckState
+  comments: PullRequestTimelineItem[]
+  labels: PullRequestLabel[]
+  number: number
+  reviewDecision?: string
+  reviewers: PullRequestReviewer[]
+  title: string
+  url: string
+}
+
+type PullRequestLabel = {
+  color?: string
+  name: string
+}
+
+type PullRequestReviewer = {
+  login: string
+  state: string
 }
 
 type PullRequestSummary = {
@@ -69,6 +119,20 @@ type PullRequestSummary = {
   number: number
   title: string
   url: string
+}
+
+type PullRequestTimelineItem = {
+  author: string
+  body: string
+  createdAt: string
+  kind: "comment" | "review"
+  state?: string
+}
+
+type TextRow = {
+  backgroundColor?: string
+  color: string
+  text: string
 }
 
 type RepositoryPullRequests =
@@ -88,6 +152,9 @@ type RepositoryPullRequests =
 const DEFAULT_THEME: HunkDiffThemeName = "catppuccin-macchiato"
 const NULL_DIFF_PATH = "/dev/null"
 const OPEN_REPOSITORY_SUGGESTION_ROWS = 5
+const PR_DETAIL_SIDEBAR_MAX_WIDTH = 32
+const PR_DETAIL_SIDEBAR_MIN_WIDTH = 22
+const PR_DETAIL_SIDEBAR_RATIO = 0.32
 const PULL_REQUEST_SECTION_LIMIT = 3
 const PULL_REQUEST_STATUS_DOT = "●"
 const PULL_REQUEST_STATUS_WIDTH = 1
@@ -574,6 +641,54 @@ async function readGhPullRequests(
   }
 }
 
+async function readGhPullRequestDetail(
+  repositoryPath: string,
+  pullRequestNumber: number,
+): Promise<PullRequestDetailState> {
+  try {
+    const process = Bun.spawn(
+      [
+        "gh",
+        "pr",
+        "view",
+        String(pullRequestNumber),
+        "--json",
+        "assignees,author,body,comments,labels,latestReviews,number,reviewDecision,reviewRequests,reviews,statusCheckRollup,title,url",
+      ],
+      {
+        cwd: repositoryPath,
+        env: createGhEnvironment(),
+        stderr: "pipe",
+        stdin: "ignore",
+        stdout: "pipe",
+      },
+    )
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+      process.exited,
+      new Response(process.stdout).text(),
+      new Response(process.stderr).text(),
+    ])
+
+    if (exitCode !== 0) {
+      return {
+        message: summarizeGhError(stderr),
+        status: "unavailable",
+      }
+    }
+
+    return {
+      detail: parsePullRequestDetail(stdout),
+      status: "loaded",
+    }
+  } catch (error) {
+    return {
+      message: error instanceof SyntaxError ? "Could not parse PR details." : "Could not load PR details.",
+      status: "unavailable",
+    }
+  }
+}
+
 function createGhEnvironment(): Record<string, string> {
   const environment: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
@@ -625,6 +740,175 @@ function parsePullRequestSummaries(stdout: string): PullRequestSummary[] {
       },
     ]
   })
+}
+
+function parsePullRequestDetail(stdout: string): PullRequestDetail {
+  const parsed = JSON.parse(stdout) as unknown
+  if (!isRecord(parsed)) {
+    throw new SyntaxError("PR detail response must be an object.")
+  }
+
+  return {
+    assignees: parsePersonList(parsed.assignees),
+    author: readPersonName(parsed.author) || "Unknown",
+    body: readString(parsed.body).trim(),
+    checkState: resolvePullRequestCheckState(parsed.statusCheckRollup),
+    comments: parsePullRequestTimeline(parsed.comments, parsed.reviews || parsed.latestReviews),
+    labels: parsePullRequestLabels(parsed.labels),
+    number: typeof parsed.number === "number" ? parsed.number : 0,
+    reviewDecision: formatGitHubStateLabel(parsed.reviewDecision),
+    reviewers: parsePullRequestReviewers(parsed.latestReviews, parsed.reviewRequests),
+    title: readString(parsed.title),
+    url: readString(parsed.url),
+  }
+}
+
+function parsePullRequestTimeline(comments: unknown, latestReviews: unknown): PullRequestTimelineItem[] {
+  const commentItems = asArray(comments).flatMap((comment) => {
+    if (!isRecord(comment)) {
+      return []
+    }
+
+    const body = readString(comment.body).trim()
+    if (!body) {
+      return []
+    }
+
+    return [
+      {
+        author: readPersonName(comment.author) || "Unknown",
+        body,
+        createdAt: readString(comment.createdAt),
+        kind: "comment" as const,
+      },
+    ]
+  })
+
+  const reviewItems = asArray(latestReviews).flatMap((review) => {
+    if (!isRecord(review)) {
+      return []
+    }
+
+    const state = formatGitHubStateLabel(review.state)
+    const body = readString(review.body).trim()
+    if (!body && !state) {
+      return []
+    }
+
+    return [
+      {
+        author: readPersonName(review.author) || "Unknown",
+        body: body || `Review: ${state}`,
+        createdAt: readString(review.submittedAt) || readString(review.createdAt),
+        kind: "review" as const,
+        state,
+      },
+    ]
+  })
+
+  return [...commentItems, ...reviewItems].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+}
+
+function parsePullRequestReviewers(latestReviews: unknown, reviewRequests: unknown): PullRequestReviewer[] {
+  const reviewers = new Map<string, PullRequestReviewer>()
+
+  for (const review of asArray(latestReviews)) {
+    if (!isRecord(review)) {
+      continue
+    }
+
+    const login = readPersonName(review.author)
+    if (!login) {
+      continue
+    }
+
+    reviewers.set(login, {
+      login,
+      state: formatGitHubStateLabel(review.state) || "Reviewed",
+    })
+  }
+
+  for (const login of parsePersonList(reviewRequests)) {
+    if (!reviewers.has(login)) {
+      reviewers.set(login, {
+        login,
+        state: "Requested",
+      })
+    }
+  }
+
+  return [...reviewers.values()].sort((a, b) => a.login.localeCompare(b.login))
+}
+
+function parsePullRequestLabels(labels: unknown): PullRequestLabel[] {
+  return asArray(labels)
+    .flatMap((label) => {
+      if (!isRecord(label)) {
+        return []
+      }
+
+      const name = readString(label.name)
+      if (!name) {
+        return []
+      }
+
+      return [
+        {
+          color: normalizeGitHubLabelColor(label.color),
+          name,
+        },
+      ]
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function parsePersonList(value: unknown): string[] {
+  const names = asPersonArray(value).flatMap((item) => {
+    const name = readPersonName(item)
+    return name ? [name] : []
+  })
+
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b))
+}
+
+function asPersonArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value
+  }
+
+  if (!isRecord(value)) {
+    return []
+  }
+
+  return [...asArray(value.nodes), ...asArray(value.users), ...asArray(value.teams)]
+}
+
+function readPersonName(value: unknown) {
+  if (!isRecord(value)) {
+    return ""
+  }
+
+  return readString(value.login) || readString(value.slug) || readString(value.name)
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" ? value : ""
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object"
+}
+
+function normalizeGitHubLabelColor(value: unknown) {
+  const color = readString(value).replace(/^#/, "")
+  if (/^[a-f0-9]{6}$/i.test(color)) {
+    return `#${color}`
+  }
+  return undefined
 }
 
 function resolvePullRequestCheckState(statusCheckRollup: unknown): PullRequestCheckState {
@@ -688,6 +972,19 @@ function normalizeGitHubState(value: unknown) {
   return typeof value === "string" && value.trim()
     ? value.trim().toUpperCase().replace(/[-\s]+/g, "_")
     : undefined
+}
+
+function formatGitHubStateLabel(value: unknown) {
+  const normalized = normalizeGitHubState(value)
+  if (!normalized) {
+    return ""
+  }
+
+  return normalized
+    .toLowerCase()
+    .split("_")
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ")
 }
 
 function readGitDiff(staged: boolean, repositoryPath: string): string {
@@ -821,6 +1118,190 @@ function pluralize(count: number, singular: string, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`
 }
 
+function wrapText(value: string, width: number) {
+  if (width <= 0) {
+    return []
+  }
+
+  const rows: string[] = []
+  for (const rawLine of value.replace(/\r\n/g, "\n").split("\n")) {
+    if (!rawLine.trim()) {
+      rows.push("")
+      continue
+    }
+
+    let remaining = rawLine
+    while (remaining.length > width) {
+      const breakIndex = remaining.lastIndexOf(" ", width)
+      const sliceEnd = breakIndex > 0 ? breakIndex : width
+      rows.push(remaining.slice(0, sliceEnd).trimEnd())
+      remaining = remaining.slice(sliceEnd).trimStart()
+    }
+    rows.push(remaining)
+  }
+
+  return rows
+}
+
+function pushWrappedRows(
+  rows: TextRow[],
+  text: string,
+  width: number,
+  color: string = MACCHIATO.text,
+  backgroundColor?: string,
+) {
+  const wrappedRows = wrapText(text, width)
+  if (wrappedRows.length === 0) {
+    rows.push({ backgroundColor, color, text: "" })
+    return
+  }
+
+  for (const wrappedRow of wrappedRows) {
+    rows.push({ backgroundColor, color, text: wrappedRow })
+  }
+}
+
+function createMarkdownRows(markdown: string, width: number): TextRow[] {
+  const source = markdown.trim()
+  if (!source) {
+    return [{ color: MACCHIATO.subtext0, text: "No description." }]
+  }
+
+  const rows: TextRow[] = []
+  const paragraphLines: string[] = []
+  let codeLanguage = ""
+  let inCodeBlock = false
+
+  const pushBlankRow = () => {
+    if (rows.length === 0 || rows[rows.length - 1]?.text === "") {
+      return
+    }
+    rows.push({ color: MACCHIATO.subtext0, text: "" })
+  }
+  const flushParagraph = () => {
+    if (paragraphLines.length === 0) {
+      return
+    }
+
+    pushWrappedRows(rows, formatInlineMarkdownText(paragraphLines.join(" ")), width, MACCHIATO.text)
+    paragraphLines.length = 0
+  }
+  const pushListItem = (marker: string, value: string) => {
+    const markerWidth = marker.length + 1
+    const wrappedRows = wrapText(formatInlineMarkdownText(value), Math.max(1, width - markerWidth))
+
+    wrappedRows.forEach((row, index) => {
+      rows.push({
+        color: MACCHIATO.text,
+        text: `${index === 0 ? `${marker} ` : " ".repeat(markerWidth)}${row}`,
+      })
+    })
+  }
+
+  for (const rawLine of markdown.replace(/\r\n/g, "\n").split("\n")) {
+    const line = rawLine.trimEnd()
+    const trimmedLine = line.trim()
+
+    if (trimmedLine.startsWith("```")) {
+      flushParagraph()
+      if (inCodeBlock) {
+        inCodeBlock = false
+        codeLanguage = ""
+        pushBlankRow()
+      } else {
+        inCodeBlock = true
+        codeLanguage = trimmedLine.slice(3).trim()
+        rows.push({
+          backgroundColor: MACCHIATO.surface0,
+          color: MACCHIATO.subtext0,
+          text: codeLanguage ? `code ${codeLanguage}` : "code",
+        })
+      }
+      continue
+    }
+
+    if (inCodeBlock) {
+      pushWrappedRows(rows, line || " ", width, MACCHIATO.text, MACCHIATO.surface0)
+      continue
+    }
+
+    if (!trimmedLine) {
+      flushParagraph()
+      pushBlankRow()
+      continue
+    }
+
+    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(trimmedLine)
+    if (headingMatch) {
+      flushParagraph()
+      pushBlankRow()
+      pushWrappedRows(rows, formatInlineMarkdownText(headingMatch[2] ?? ""), width, MACCHIATO.mauve)
+      continue
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmedLine)) {
+      flushParagraph()
+      pushBlankRow()
+      rows.push({ color: MACCHIATO.surface2, text: "─".repeat(Math.max(1, width)) })
+      pushBlankRow()
+      continue
+    }
+
+    const quoteMatch = /^>\s?(.*)$/.exec(trimmedLine)
+    if (quoteMatch) {
+      flushParagraph()
+      pushWrappedRows(rows, `│ ${formatInlineMarkdownText(quoteMatch[1] ?? "")}`, width, MACCHIATO.subtext0)
+      continue
+    }
+
+    const unorderedListMatch = /^[-*+]\s+(.+)$/.exec(trimmedLine)
+    if (unorderedListMatch) {
+      flushParagraph()
+      pushListItem("-", unorderedListMatch[1] ?? "")
+      continue
+    }
+
+    const orderedListMatch = /^(\d+)\.\s+(.+)$/.exec(trimmedLine)
+    if (orderedListMatch) {
+      flushParagraph()
+      pushListItem(`${orderedListMatch[1]}.`, orderedListMatch[2] ?? "")
+      continue
+    }
+
+    paragraphLines.push(trimmedLine)
+  }
+
+  flushParagraph()
+  return rows
+}
+
+function formatInlineMarkdownText(value: string) {
+  return value
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/!\[([^\]]*)]\([^)]*\)/g, (_match, alt: string) => `[image${alt ? `: ${alt}` : ""}]`)
+    .replace(/\[([^\]]+)]\(([^)]+)\)/g, (_match, label: string, url: string) => `${label} (${url})`)
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+}
+
+function formatTimelineTimestamp(value: string) {
+  return value ? value.replace("T", " ").slice(0, 16) : ""
+}
+
+function formatCheckStateLabel(checkState: PullRequestCheckState) {
+  if (checkState === "failed") {
+    return "Checks failed"
+  }
+  if (checkState === "running") {
+    return "Checks running"
+  }
+  return "Checks passed"
+}
+
 function defaultSelection(files: HunkDiffFile[]): HunkDiffSelection {
   return {
     fileId: files[0]?.id ?? "",
@@ -833,6 +1314,16 @@ function normalizeSelection(files: HunkDiffFile[], selection: HunkDiffSelection 
     return selection
   }
   return defaultSelection(files)
+}
+
+function findPullRequestSummary(repository: RepositoryView, pullRequestNumber: number) {
+  if (repository.pullRequests?.status !== "loaded") {
+    return undefined
+  }
+
+  return [...repository.pullRequests.openedByUser, ...repository.pullRequests.needsReview].find(
+    (pullRequest) => pullRequest.number === pullRequestNumber,
+  )
 }
 
 function createPullRequestSidebarRows(pullRequests: RepositoryPullRequests | undefined): PullRequestSidebarRow[] {
@@ -872,6 +1363,7 @@ function createPullRequestSectionRows(pullRequests: PullRequestSummary[]): PullR
     const rows: PullRequestSidebarRow[] = [
       {
         color: MACCHIATO.text,
+        pullRequest,
         rightColor: getPullRequestCheckStateColor(pullRequest.checkState),
         rightText: PULL_REQUEST_STATUS_DOT,
         text: `    #${pullRequest.number} ${pullRequest.title}`,
@@ -881,6 +1373,7 @@ function createPullRequestSectionRows(pullRequests: PullRequestSummary[]): PullR
     if (pullRequest.hasChangesRequested) {
       rows.push({
         color: MACCHIATO.red,
+        pullRequest,
         text: "    Changes requested",
       })
     }
@@ -910,17 +1403,21 @@ function getPullRequestCheckStateColor(checkState: PullRequestCheckState) {
 }
 
 function RepositorySidebar({
+  activePane,
   activeRepositoryId,
   onCloseRepository,
   onOpenRepository,
-  onSelectRepository,
+  onSelectPullRequest,
+  onSelectWorkingChanges,
   width,
   repositories,
 }: {
+  activePane: ActivePane
   activeRepositoryId: string
   onCloseRepository: (repositoryId: string) => void
   onOpenRepository: () => void
-  onSelectRepository: (repositoryId: string) => void
+  onSelectPullRequest: (repositoryId: string, pullRequest: PullRequestSummary) => void
+  onSelectWorkingChanges: (repositoryId: string) => void
   width: number
   repositories: RepositoryView[]
 }) {
@@ -954,12 +1451,18 @@ function RepositorySidebar({
         </box>
         {repositories.map((repository) => {
           const active = repository.id === activeRepositoryId
+          const workingChangesActive = active && activePane.kind === "working"
           const pullRequestRows = createPullRequestSidebarRows(repository.pullRequests)
-          const selectRepository = () => onSelectRepository(repository.id)
+          const selectRepository = () => onSelectWorkingChanges(repository.id)
           const closeRepository = (event: MouseEvent) => {
             event.preventDefault()
             event.stopPropagation()
             onCloseRepository(repository.id)
+          }
+          const selectPullRequest = (pullRequest: PullRequestSummary, event: MouseEvent) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onSelectPullRequest(repository.id, pullRequest)
           }
           const nameWidth = Math.max(1, contentWidth - REPOSITORY_CLOSE_CONTROL_WIDTH)
 
@@ -989,12 +1492,12 @@ function RepositorySidebar({
                 style={{
                   width: "100%",
                   height: 1,
-                  backgroundColor: active ? MACCHIATO.surface0 : MACCHIATO.mantle,
+                  backgroundColor: workingChangesActive ? MACCHIATO.surface0 : MACCHIATO.mantle,
                 }}
                 onMouseUp={selectRepository}
               >
-                <text fg={active ? MACCHIATO.mauve : MACCHIATO.text}>
-                  {fitText(`${active ? ">" : " "} Working changes`, contentWidth)}
+                <text fg={workingChangesActive ? MACCHIATO.mauve : MACCHIATO.text}>
+                  {fitText(`${workingChangesActive ? ">" : " "} Working changes`, contentWidth)}
                 </text>
               </box>
               <box style={{ width: "100%", height: 1 }} onMouseUp={selectRepository}>
@@ -1005,31 +1508,40 @@ function RepositorySidebar({
                   )}
                 </text>
               </box>
-              {pullRequestRows.map((row, index) => (
-                <box
-                  key={`${repository.id}:pull-request-row:${index}`}
-                  style={{ width: "100%", height: 1, flexDirection: "row" }}
-                  onMouseUp={selectRepository}
-                >
-                  {(() => {
-                    const rightWidth = row.rightText ? Math.min(contentWidth, PULL_REQUEST_STATUS_WIDTH) : 0
-                    const leftWidth = Math.max(1, contentWidth - rightWidth)
+              {pullRequestRows.map((row, index) => {
+                const pullRequestActive =
+                  active &&
+                  activePane.kind === "pull-request" &&
+                  activePane.pullRequestNumber === row.pullRequest?.number
+                const rightWidth = row.rightText ? Math.min(contentWidth, PULL_REQUEST_STATUS_WIDTH) : 0
+                const leftWidth = Math.max(1, contentWidth - rightWidth)
+                const rowColor = pullRequestActive ? MACCHIATO.mauve : row.color
+                const onMouseUp = row.pullRequest
+                  ? (event: MouseEvent) => selectPullRequest(row.pullRequest as PullRequestSummary, event)
+                  : selectRepository
 
-                    return (
-                      <>
-                        <box style={{ width: leftWidth, height: 1 }}>
-                          <text fg={row.color}>{fitText(row.text, leftWidth)}</text>
-                        </box>
-                        {row.rightText ? (
-                          <box style={{ width: rightWidth, height: 1 }}>
-                            <text fg={row.rightColor ?? row.color}>{fitText(row.rightText, rightWidth)}</text>
-                          </box>
-                        ) : null}
-                      </>
-                    )
-                  })()}
-                </box>
-              ))}
+                return (
+                  <box
+                    key={`${repository.id}:pull-request-row:${index}`}
+                    style={{
+                      width: "100%",
+                      height: 1,
+                      flexDirection: "row",
+                      backgroundColor: pullRequestActive ? MACCHIATO.surface0 : MACCHIATO.mantle,
+                    }}
+                    onMouseUp={onMouseUp}
+                  >
+                    <box style={{ width: leftWidth, height: 1 }}>
+                      <text fg={rowColor}>{fitText(row.text, leftWidth)}</text>
+                    </box>
+                    {row.rightText ? (
+                      <box style={{ width: rightWidth, height: 1 }}>
+                        <text fg={row.rightColor ?? row.color}>{fitText(row.rightText, rightWidth)}</text>
+                      </box>
+                    ) : null}
+                  </box>
+                )
+              })}
               <box style={{ width: "100%", height: 1 }} onMouseUp={selectRepository} />
             </box>
           )
@@ -1161,6 +1673,400 @@ function StatusOverlay({
   )
 }
 
+function PullRequestPane({
+  detailState,
+  summary,
+  width,
+}: {
+  detailState?: PullRequestDetailState
+  summary?: PullRequestSummary
+  width: number
+}) {
+  const sidebarWidth =
+    width >= PR_DETAIL_SIDEBAR_MIN_WIDTH + 24
+      ? Math.min(PR_DETAIL_SIDEBAR_MAX_WIDTH, Math.max(PR_DETAIL_SIDEBAR_MIN_WIDTH, Math.floor(width * PR_DETAIL_SIDEBAR_RATIO)))
+      : 0
+  const contentWidth = Math.max(1, width - sidebarWidth - (sidebarWidth > 0 ? 1 : 0))
+  const detail = detailState?.status === "loaded" ? detailState.detail : undefined
+
+  return (
+    <box style={{ width, height: "100%", flexDirection: "row" }}>
+      <PullRequestContentPane detailState={detailState} summary={summary} width={contentWidth} />
+      {sidebarWidth > 0 ? (
+        <>
+          <box style={{ width: 1, height: "100%" }} />
+          <PullRequestMetadataSidebar detail={detail} summary={summary} width={sidebarWidth} />
+        </>
+      ) : null}
+    </box>
+  )
+}
+
+function PullRequestContentPane({
+  detailState,
+  summary,
+  width,
+}: {
+  detailState?: PullRequestDetailState
+  summary?: PullRequestSummary
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+
+  if (!detailState || detailState.status === "loading") {
+    return (
+      <box
+        title={summary ? `PR #${summary.number}` : "Pull Request"}
+        style={{
+          width,
+          height: "100%",
+          border: true,
+          borderStyle: "rounded",
+          borderColor: MACCHIATO.surface2,
+          backgroundColor: MACCHIATO.mantle,
+          paddingLeft: 1,
+          paddingRight: 1,
+        }}
+      >
+        <text fg={MACCHIATO.subtext0}>{fitText("Loading pull request...", contentWidth)}</text>
+      </box>
+    )
+  }
+
+  if (detailState.status === "unavailable") {
+    return (
+      <box
+        title={summary ? `PR #${summary.number}` : "Pull Request"}
+        style={{
+          width,
+          height: "100%",
+          border: true,
+          borderStyle: "rounded",
+          borderColor: MACCHIATO.red,
+          backgroundColor: MACCHIATO.mantle,
+          paddingLeft: 1,
+          paddingRight: 1,
+        }}
+      >
+        <text fg={MACCHIATO.red}>{fitText(detailState.message, contentWidth)}</text>
+      </box>
+    )
+  }
+
+  const detail = detailState.detail
+  const descriptionRows = createMarkdownRows(detail.body, Math.max(1, contentWidth - 4))
+
+  return (
+    <box
+      title={`PR #${detail.number}`}
+      style={{
+        width,
+        height: "100%",
+        border: true,
+        borderStyle: "rounded",
+        borderColor: MACCHIATO.surface2,
+        backgroundColor: MACCHIATO.mantle,
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <scrollbox style={{ width: "100%", height: "100%" }} scrollY>
+        <PullRequestTitleBlock detail={detail} width={contentWidth} />
+        <DescriptionMarkdownBlock rows={descriptionRows} width={contentWidth} />
+        <CommentChain comments={detail.comments} width={contentWidth} />
+      </scrollbox>
+    </box>
+  )
+}
+
+function PullRequestTitleBlock({
+  detail,
+  width,
+}: {
+  detail: PullRequestDetail
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+  const titleRows = wrapText(detail.title, contentWidth)
+  const height = Math.max(4, titleRows.length + 3)
+
+  return (
+    <box
+      style={{
+        width: "100%",
+        height,
+        backgroundColor: MACCHIATO.mantle,
+        flexDirection: "column",
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <box style={{ width: "100%", height: 1 }}>
+        <text fg={MACCHIATO.subtext0}>{fitText(`Pull request #${detail.number}`, contentWidth)}</text>
+      </box>
+      {titleRows.map((row, index) => (
+        <box key={`pull-request-title-row:${index}`} style={{ width: "100%", height: 1 }}>
+          <text fg={MACCHIATO.lavender}>{fitText(row, contentWidth)}</text>
+        </box>
+      ))}
+      <box style={{ width: "100%", height: 1 }}>
+        <text fg={MACCHIATO.subtext0}>{fitText(`Opened by ${detail.author}`, contentWidth)}</text>
+      </box>
+      <box style={{ width: "100%", height: 1 }}>
+        <text fg={MACCHIATO.subtext0}>{fitText(detail.url, contentWidth)}</text>
+      </box>
+    </box>
+  )
+}
+
+function DescriptionMarkdownBlock({
+  rows,
+  width,
+}: {
+  rows: TextRow[]
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+
+  return (
+    <box
+      title="Description"
+      style={{
+        width: "100%",
+        height: rows.length + 2,
+        border: true,
+        borderStyle: "rounded",
+        borderColor: MACCHIATO.surface2,
+        backgroundColor: MACCHIATO.base,
+        flexDirection: "column",
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <TextRows rowKeyPrefix="pull-request-description-row" rows={rows} width={contentWidth} />
+    </box>
+  )
+}
+
+function CommentChain({
+  comments,
+  width,
+}: {
+  comments: PullRequestTimelineItem[]
+  width: number
+}) {
+  const commentBlockWidth = Math.max(1, Math.floor(width * 0.9))
+  const leftGutterWidth = Math.max(0, width - commentBlockWidth)
+
+  return (
+    <box style={{ width: "100%", flexDirection: "column" }}>
+      <box style={{ width: "100%", height: 1 }} />
+      <box style={{ width: "100%", height: 1 }}>
+        <text fg={MACCHIATO.mauve}>{fitText("Comment chain", width)}</text>
+      </box>
+      {comments.length === 0 ? (
+        <box style={{ width: "100%", height: 1 }}>
+          <text fg={MACCHIATO.subtext0}>{fitText("No comments yet.", width)}</text>
+        </box>
+      ) : (
+        comments.map((comment, index) => (
+          <box
+            key={`pull-request-comment-row:${index}`}
+            style={{ width: "100%", height: createCommentBlockHeight(comment, commentBlockWidth), flexDirection: "row" }}
+          >
+            {leftGutterWidth > 0 ? <box style={{ width: leftGutterWidth, height: "100%" }} /> : null}
+            <CommentBlock comment={comment} width={commentBlockWidth} />
+          </box>
+        ))
+      )}
+    </box>
+  )
+}
+
+function CommentBlock({
+  comment,
+  width,
+}: {
+  comment: PullRequestTimelineItem
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+  const rows = createCommentBodyRows(comment, contentWidth)
+
+  return (
+    <box
+      style={{
+        width,
+        height: rows.length + 3,
+        border: true,
+        borderStyle: "rounded",
+        borderColor: MACCHIATO.surface2,
+        backgroundColor: MACCHIATO.base,
+        flexDirection: "column",
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <box style={{ width: "100%", height: 1 }}>
+        <text fg={MACCHIATO.lavender}>{fitText(formatCommentHeading(comment), contentWidth)}</text>
+      </box>
+      <TextRows rowKeyPrefix={`pull-request-comment:${comment.author}:${comment.createdAt}`} rows={rows} width={contentWidth} />
+    </box>
+  )
+}
+
+function TextRows({
+  rowKeyPrefix,
+  rows,
+  width,
+}: {
+  rowKeyPrefix: string
+  rows: TextRow[]
+  width: number
+}) {
+  return (
+    <>
+      {rows.map((row, index) => (
+        <box
+          key={`${rowKeyPrefix}:${index}`}
+          style={{
+            width: "100%",
+            height: 1,
+            backgroundColor: row.backgroundColor,
+          }}
+        >
+          <text fg={row.color}>{fitText(row.text, width)}</text>
+        </box>
+      ))}
+    </>
+  )
+}
+
+function PullRequestMetadataSidebar({
+  detail,
+  summary,
+  width,
+}: {
+  detail?: PullRequestDetail
+  summary?: PullRequestSummary
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+  const rows = detail
+    ? createPullRequestMetadataRows(detail, contentWidth)
+    : [
+        {
+          color: MACCHIATO.lavender,
+          text: "Status",
+        },
+        {
+          color: summary ? getPullRequestCheckStateColor(summary.checkState) : MACCHIATO.subtext0,
+          text: summary ? formatCheckStateLabel(summary.checkState) : "Loading...",
+        },
+      ]
+
+  return (
+    <box
+      title="PR Info"
+      style={{
+        width,
+        height: "100%",
+        border: true,
+        borderStyle: "rounded",
+        borderColor: MACCHIATO.surface2,
+        backgroundColor: MACCHIATO.mantle,
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <scrollbox style={{ width: "100%", height: "100%" }} scrollY>
+        <TextRows rowKeyPrefix="pull-request-metadata-row" rows={rows} width={contentWidth} />
+      </scrollbox>
+    </box>
+  )
+}
+
+function createCommentBlockHeight(comment: PullRequestTimelineItem, width: number) {
+  return createCommentBodyRows(comment, Math.max(1, width - 4)).length + 3
+}
+
+function createCommentBodyRows(comment: PullRequestTimelineItem, width: number): TextRow[] {
+  const rows: TextRow[] = []
+  pushWrappedRows(rows, comment.body.trim() || "No content.", width, comment.body.trim() ? MACCHIATO.text : MACCHIATO.subtext0)
+  return rows
+}
+
+function formatCommentHeading(comment: PullRequestTimelineItem) {
+  const state = comment.kind === "review" && comment.state ? ` (${comment.state})` : ""
+  const timestamp = formatTimelineTimestamp(comment.createdAt)
+  const suffix = timestamp ? ` - ${timestamp}` : ""
+  const action = comment.kind === "review" ? `reviewed${state}` : "commented"
+  return `${comment.author} ${action}${suffix}`
+}
+
+function createPullRequestMetadataRows(detail: PullRequestDetail, width: number): TextRow[] {
+  const rows: TextRow[] = [
+    { color: MACCHIATO.lavender, text: "Status" },
+    {
+      color: getPullRequestCheckStateColor(detail.checkState),
+      text: formatCheckStateLabel(detail.checkState),
+    },
+  ]
+
+  if (detail.reviewDecision) {
+    rows.push({
+      color: detail.reviewDecision === "Changes Requested" ? MACCHIATO.red : MACCHIATO.subtext0,
+      text: detail.reviewDecision,
+    })
+  }
+
+  rows.push({ color: MACCHIATO.subtext0, text: "" })
+  rows.push({ color: MACCHIATO.lavender, text: "Reviewers" })
+  if (detail.reviewers.length === 0) {
+    rows.push({ color: MACCHIATO.subtext0, text: "None" })
+  } else {
+    for (const reviewer of detail.reviewers) {
+      pushWrappedRows(rows, `${reviewer.login} ${reviewer.state}`, width, getReviewerStateColor(reviewer.state))
+    }
+  }
+
+  rows.push({ color: MACCHIATO.subtext0, text: "" })
+  rows.push({ color: MACCHIATO.lavender, text: "Assignees" })
+  if (detail.assignees.length === 0) {
+    rows.push({ color: MACCHIATO.subtext0, text: "None" })
+  } else {
+    for (const assignee of detail.assignees) {
+      pushWrappedRows(rows, assignee, width, MACCHIATO.text)
+    }
+  }
+
+  rows.push({ color: MACCHIATO.subtext0, text: "" })
+  rows.push({ color: MACCHIATO.lavender, text: "Labels" })
+  if (detail.labels.length === 0) {
+    rows.push({ color: MACCHIATO.subtext0, text: "None" })
+  } else {
+    for (const label of detail.labels) {
+      pushWrappedRows(rows, label.name, width, label.color ?? MACCHIATO.text)
+    }
+  }
+
+  return rows
+}
+
+function getReviewerStateColor(state: string) {
+  const normalized = normalizeGitHubState(state)
+  if (normalized === "CHANGES_REQUESTED") {
+    return MACCHIATO.red
+  }
+  if (normalized === "APPROVED") {
+    return MACCHIATO.green
+  }
+  if (normalized === "REQUESTED") {
+    return MACCHIATO.yellow
+  }
+  return MACCHIATO.text
+}
+
 function GitPane({
   onSelectionChange,
   selection,
@@ -1232,7 +2138,10 @@ function DiffApp({
   const pullRequestLoadIds = useRef(new Set<string>())
   const [repositories, setRepositories] = useState<RepositoryView[]>(initialRepositories)
   const firstRepository = repositories[0]
-  const [activeRepositoryId, setActiveRepositoryId] = useState(firstRepository?.id ?? "")
+  const [activePane, setActivePane] = useState<ActivePane>(() => ({
+    kind: "working",
+    repositoryId: firstRepository?.id ?? "",
+  }))
   const [selections, setSelections] = useState<Record<string, HunkDiffSelection>>(() =>
     Object.fromEntries(repositories.map((repository) => [repository.id, defaultSelection(repository.files)])),
   )
@@ -1241,11 +2150,18 @@ function DiffApp({
   const [selectedPathSuggestionIndex, setSelectedPathSuggestionIndex] = useState(0)
   const [openPromptError, setOpenPromptError] = useState("")
   const [status, setStatus] = useState<OpenRepositoryStatus>()
+  const activeRepositoryId = activePane.repositoryId
 
   const activeRepository = useMemo(
     () => repositories.find((repository) => repository.id === activeRepositoryId) ?? firstRepository,
     [activeRepositoryId, firstRepository, repositories],
   )
+  const activePullRequestSummary =
+    activePane.kind === "pull-request" && activeRepository
+      ? findPullRequestSummary(activeRepository, activePane.pullRequestNumber)
+      : undefined
+  const activePullRequestDetailState =
+    activePane.kind === "pull-request" ? activeRepository?.pullRequestDetails?.[activePane.pullRequestNumber] : undefined
   const files = activeRepository?.files ?? []
   const selection = normalizeSelection(files, activeRepository ? selections[activeRepository.id] : undefined)
   const shellWidth = Math.max(1, terminal.width - 2)
@@ -1255,7 +2171,7 @@ function DiffApp({
   )
   const gitPaneWidth = Math.max(1, shellWidth - repositoryWidth - 1)
   const headerWidth = shellWidth
-  const commandText = `${pluralize(repositories.length, "repository", "repositories")}  |  o open repository  |  tab/click repository  |  q quit`
+  const commandText = `${pluralize(repositories.length, "repository", "repositories")}  |  o open repository  |  tab/click repo or PR  |  q quit`
   const pathSuggestions = useMemo(() => createPathSuggestions(repositoryPathInput), [repositoryPathInput])
   const normalizedPathSuggestionIndex =
     pathSuggestions.length > 0 ? Math.min(selectedPathSuggestionIndex, pathSuggestions.length - 1) : 0
@@ -1276,6 +2192,46 @@ function DiffApp({
       })
     }
   }, [repositories])
+
+  useEffect(() => {
+    if (activePane.kind !== "pull-request" || !activeRepository || activePullRequestDetailState) {
+      return
+    }
+
+    const repositoryId = activeRepository.id
+    const repositoryPath = activeRepository.path
+    const pullRequestNumber = activePane.pullRequestNumber
+
+    setRepositories((currentRepositories) =>
+      currentRepositories.map((currentRepository) =>
+        currentRepository.id === repositoryId
+          ? {
+              ...currentRepository,
+              pullRequestDetails: {
+                ...(currentRepository.pullRequestDetails ?? {}),
+                [pullRequestNumber]: { status: "loading" },
+              },
+            }
+          : currentRepository,
+      ),
+    )
+
+    void readGhPullRequestDetail(repositoryPath, pullRequestNumber).then((detailState) => {
+      setRepositories((currentRepositories) =>
+        currentRepositories.map((currentRepository) =>
+          currentRepository.id === repositoryId
+            ? {
+                ...currentRepository,
+                pullRequestDetails: {
+                  ...(currentRepository.pullRequestDetails ?? {}),
+                  [pullRequestNumber]: detailState,
+                },
+              }
+            : currentRepository,
+        ),
+      )
+    })
+  }, [activePane, activeRepository, activePullRequestDetailState])
 
   useEffect(() => {
     if (!status) {
@@ -1341,6 +2297,21 @@ function DiffApp({
     })
   }
 
+  function selectWorkingChanges(repositoryId: string) {
+    setActivePane({
+      kind: "working",
+      repositoryId,
+    })
+  }
+
+  function selectPullRequest(repositoryId: string, pullRequest: PullRequestSummary) {
+    setActivePane({
+      kind: "pull-request",
+      pullRequestNumber: pullRequest.number,
+      repositoryId,
+    })
+  }
+
   function submitOpenRepository(input: string) {
     const directory = input.trim()
     if (!directory) {
@@ -1358,7 +2329,7 @@ function DiffApp({
 
     const existingRepository = repositories.find((repository) => repository.path === nextRepository.path)
     if (existingRepository) {
-      setActiveRepositoryId(existingRepository.id)
+      selectWorkingChanges(existingRepository.id)
       setOpenPromptVisible(false)
       setRepositoryPathInput("")
       setOpenPromptError("")
@@ -1371,7 +2342,7 @@ function DiffApp({
       ...currentSelections,
       [nextRepository.id]: defaultSelection(nextRepository.files),
     }))
-    setActiveRepositoryId(nextRepository.id)
+    selectWorkingChanges(nextRepository.id)
     setOpenPromptVisible(false)
     setRepositoryPathInput("")
     setOpenPromptError("")
@@ -1401,7 +2372,7 @@ function DiffApp({
     pullRequestLoadIds.current.delete(repositoryId)
 
     if (activeRepository?.id === repositoryId) {
-      setActiveRepositoryId(nextActiveRepository?.id ?? "")
+      selectWorkingChanges(nextActiveRepository?.id ?? "")
     }
 
     setStatus({
@@ -1423,7 +2394,7 @@ function DiffApp({
     )
     const nextRepository = repositories[(currentIndex + 1) % repositories.length]
     if (nextRepository) {
-      setActiveRepositoryId(nextRepository.id)
+      selectWorkingChanges(nextRepository.id)
     }
   }
 
@@ -1511,21 +2482,31 @@ function DiffApp({
       ) : null}
       <box style={{ width: "100%", flexGrow: 1, flexDirection: "row" }}>
         <RepositorySidebar
+          activePane={activePane}
           activeRepositoryId={activeRepository?.id ?? ""}
           onCloseRepository={closeRepository}
           onOpenRepository={showOpenRepositoryPrompt}
-          onSelectRepository={setActiveRepositoryId}
+          onSelectPullRequest={selectPullRequest}
+          onSelectWorkingChanges={selectWorkingChanges}
           width={repositoryWidth}
           repositories={repositories}
         />
         <box style={{ width: 1, height: "100%" }} />
-        <GitPane
-          onSelectionChange={setActiveSelection}
-          selection={selection}
-          theme={theme}
-          width={gitPaneWidth}
-          repository={activeRepository}
-        />
+        {activePane.kind === "pull-request" && activeRepository ? (
+          <PullRequestPane
+            detailState={activePullRequestDetailState}
+            summary={activePullRequestSummary}
+            width={gitPaneWidth}
+          />
+        ) : (
+          <GitPane
+            onSelectionChange={setActiveSelection}
+            selection={selection}
+            theme={theme}
+            width={gitPaneWidth}
+            repository={activeRepository}
+          />
+        )}
       </box>
       <StatusOverlay status={status} width={headerWidth} />
     </box>
