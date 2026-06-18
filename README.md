@@ -39,7 +39,7 @@ Inside the TUI:
 - Line wrapping is always on.
 - Status messages appear in a bottom-right overlay so command controls stay visible.
 - The left sidebar lists repositories, each with a `Working changes` menu item.
-- For GitHub repositories, the sidebar also lists open PRs split into `Opened by you` and `Needs review`.
+- For GitHub repositories, the sidebar also lists open PRs split into `Opened by you` and `Needs review`, with check status dots and changes-requested notices.
 - The git diff UI lives inside a swappable pane and always renders split diffs.
 - `q`, `Esc`, or `Ctrl+C` exits.
 

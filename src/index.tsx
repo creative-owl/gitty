@@ -54,7 +54,18 @@ type PathSuggestion = {
   value: string
 }
 
+type PullRequestCheckState = "failed" | "running" | "passed"
+
+type PullRequestSidebarRow = {
+  color: string
+  rightColor?: string
+  rightText?: string
+  text: string
+}
+
 type PullRequestSummary = {
+  checkState: PullRequestCheckState
+  hasChangesRequested: boolean
   number: number
   title: string
   url: string
@@ -78,10 +89,13 @@ const DEFAULT_THEME: HunkDiffThemeName = "catppuccin-macchiato"
 const NULL_DIFF_PATH = "/dev/null"
 const OPEN_REPOSITORY_SUGGESTION_ROWS = 5
 const PULL_REQUEST_SECTION_LIMIT = 3
+const PULL_REQUEST_STATUS_DOT = "●"
+const PULL_REQUEST_STATUS_WIDTH = 1
 const REPOSITORY_CLOSE_CONTROL_WIDTH = 3
 const REPOSITORY_SIDEBAR_MAX_WIDTH = 45
 const REPOSITORY_SIDEBAR_MIN_WIDTH = 29
 const REPOSITORY_SIDEBAR_WIDTH_RATIO = 0.36
+const STATUS_OVERLAY_DISMISS_MS = 5000
 const STATUS_OVERLAY_MAX_WIDTH = 56
 const STATUS_OVERLAY_MIN_WIDTH = 24
 
@@ -98,6 +112,18 @@ const MACCHIATO = {
   base: "#24273a",
   mantle: "#1e2030",
 } as const
+
+const FAILED_CHECK_STATES = new Set([
+  "ACTION_REQUIRED",
+  "CANCELLED",
+  "ERROR",
+  "FAILED",
+  "FAILURE",
+  "STARTUP_FAILURE",
+  "TIMED_OUT",
+])
+const PASSED_CHECK_STATES = new Set(["NEUTRAL", "SKIPPED", "SUCCESS"])
+const RUNNING_CHECK_STATES = new Set(["EXPECTED", "IN_PROGRESS", "PENDING", "QUEUED", "REQUESTED", "WAITING"])
 
 const SAMPLE_PATCH = `diff --git a/src/greeting.ts b/src/greeting.ts
 index 87ab12d..41ef982 100644
@@ -512,7 +538,7 @@ async function readGhPullRequests(
         "--search",
         search,
         "--json",
-        "number,title,url",
+        "number,reviewDecision,statusCheckRollup,title,url",
       ],
       {
         cwd: repositoryPath,
@@ -591,12 +617,77 @@ function parsePullRequestSummaries(stdout: string): PullRequestSummary[] {
 
     return [
       {
+        checkState: resolvePullRequestCheckState(candidate.statusCheckRollup),
+        hasChangesRequested: normalizeGitHubState(candidate.reviewDecision) === "CHANGES_REQUESTED",
         number: candidate.number,
         title: candidate.title,
         url: typeof candidate.url === "string" ? candidate.url : "",
       },
     ]
   })
+}
+
+function resolvePullRequestCheckState(statusCheckRollup: unknown): PullRequestCheckState {
+  const checks = normalizeStatusCheckRollup(statusCheckRollup)
+  if (checks.length === 0) {
+    return "passed"
+  }
+
+  let hasRunningCheck = false
+  for (const check of checks) {
+    const checkState = resolveStatusCheckState(check)
+    if (checkState === "failed") {
+      return "failed"
+    }
+    if (checkState === "running") {
+      hasRunningCheck = true
+    }
+  }
+
+  return hasRunningCheck ? "running" : "passed"
+}
+
+function normalizeStatusCheckRollup(statusCheckRollup: unknown): unknown[] {
+  if (Array.isArray(statusCheckRollup)) {
+    return statusCheckRollup
+  }
+
+  if (!statusCheckRollup || typeof statusCheckRollup !== "object") {
+    return []
+  }
+
+  const candidate = statusCheckRollup as Record<string, unknown>
+  return Array.isArray(candidate.nodes) ? candidate.nodes : []
+}
+
+function resolveStatusCheckState(check: unknown): PullRequestCheckState {
+  if (!check || typeof check !== "object") {
+    return "running"
+  }
+
+  const candidate = check as Record<string, unknown>
+  const states = [candidate.conclusion, candidate.state, candidate.status].flatMap((value) => {
+    const normalized = normalizeGitHubState(value)
+    return normalized ? [normalized] : []
+  })
+
+  if (states.some((state) => FAILED_CHECK_STATES.has(state))) {
+    return "failed"
+  }
+  if (states.some((state) => RUNNING_CHECK_STATES.has(state))) {
+    return "running"
+  }
+  if (states.some((state) => PASSED_CHECK_STATES.has(state))) {
+    return "passed"
+  }
+
+  return "running"
+}
+
+function normalizeGitHubState(value: unknown) {
+  return typeof value === "string" && value.trim()
+    ? value.trim().toUpperCase().replace(/[-\s]+/g, "_")
+    : undefined
 }
 
 function readGitDiff(staged: boolean, repositoryPath: string): string {
@@ -744,7 +835,7 @@ function normalizeSelection(files: HunkDiffFile[], selection: HunkDiffSelection 
   return defaultSelection(files)
 }
 
-function createPullRequestSidebarRows(pullRequests: RepositoryPullRequests | undefined) {
+function createPullRequestSidebarRows(pullRequests: RepositoryPullRequests | undefined): PullRequestSidebarRow[] {
   if (!pullRequests) {
     return []
   }
@@ -771,25 +862,51 @@ function createPullRequestSidebarRows(pullRequests: RepositoryPullRequests | und
   ]
 }
 
-function createPullRequestSectionRows(pullRequests: PullRequestSummary[]) {
+function createPullRequestSectionRows(pullRequests: PullRequestSummary[]): PullRequestSidebarRow[] {
   if (pullRequests.length === 0) {
     return [{ color: MACCHIATO.subtext0, text: "    None" }]
   }
 
-  const visiblePullRequests = pullRequests.slice(0, PULL_REQUEST_SECTION_LIMIT).map((pullRequest) => ({
-    color: MACCHIATO.text,
-    text: `    #${pullRequest.number} ${pullRequest.title}`,
-  }))
+  const visiblePullRequests = pullRequests.slice(0, PULL_REQUEST_SECTION_LIMIT)
+  const visiblePullRequestRows = visiblePullRequests.flatMap((pullRequest) => {
+    const rows: PullRequestSidebarRow[] = [
+      {
+        color: MACCHIATO.text,
+        rightColor: getPullRequestCheckStateColor(pullRequest.checkState),
+        rightText: PULL_REQUEST_STATUS_DOT,
+        text: `    #${pullRequest.number} ${pullRequest.title}`,
+      },
+    ]
+
+    if (pullRequest.hasChangesRequested) {
+      rows.push({
+        color: MACCHIATO.red,
+        text: "    Changes requested",
+      })
+    }
+
+    return rows
+  })
   const hiddenPullRequestCount = pullRequests.length - visiblePullRequests.length
 
   if (hiddenPullRequestCount <= 0) {
-    return visiblePullRequests
+    return visiblePullRequestRows
   }
 
   return [
-    ...visiblePullRequests,
+    ...visiblePullRequestRows,
     { color: MACCHIATO.subtext0, text: `    +${hiddenPullRequestCount} more` },
   ]
+}
+
+function getPullRequestCheckStateColor(checkState: PullRequestCheckState) {
+  if (checkState === "failed") {
+    return MACCHIATO.red
+  }
+  if (checkState === "running") {
+    return MACCHIATO.yellow
+  }
+  return MACCHIATO.green
 }
 
 function RepositorySidebar({
@@ -891,10 +1008,26 @@ function RepositorySidebar({
               {pullRequestRows.map((row, index) => (
                 <box
                   key={`${repository.id}:pull-request-row:${index}`}
-                  style={{ width: "100%", height: 1 }}
+                  style={{ width: "100%", height: 1, flexDirection: "row" }}
                   onMouseUp={selectRepository}
                 >
-                  <text fg={row.color}>{fitText(row.text, contentWidth)}</text>
+                  {(() => {
+                    const rightWidth = row.rightText ? Math.min(contentWidth, PULL_REQUEST_STATUS_WIDTH) : 0
+                    const leftWidth = Math.max(1, contentWidth - rightWidth)
+
+                    return (
+                      <>
+                        <box style={{ width: leftWidth, height: 1 }}>
+                          <text fg={row.color}>{fitText(row.text, leftWidth)}</text>
+                        </box>
+                        {row.rightText ? (
+                          <box style={{ width: rightWidth, height: 1 }}>
+                            <text fg={row.rightColor ?? row.color}>{fitText(row.rightText, rightWidth)}</text>
+                          </box>
+                        ) : null}
+                      </>
+                    )
+                  })()}
                 </box>
               ))}
               <box style={{ width: "100%", height: 1 }} onMouseUp={selectRepository} />
@@ -1143,6 +1276,18 @@ function DiffApp({
       })
     }
   }, [repositories])
+
+  useEffect(() => {
+    if (!status) {
+      return
+    }
+
+    const timeout = setTimeout(() => {
+      setStatus((currentStatus) => (currentStatus === status ? undefined : currentStatus))
+    }, STATUS_OVERLAY_DISMISS_MS)
+
+    return () => clearTimeout(timeout)
+  }, [status])
 
   function setActiveSelection(nextSelection: HunkDiffSelection) {
     if (!activeRepository) {
