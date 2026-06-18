@@ -1,6 +1,7 @@
 # Gitty
 
-A Bun + OpenTUI starter project.
+A Bun + OpenTUI terminal diff viewer built with Hunk's reusable
+`hunkdiff/opentui` components.
 
 ## Setup
 
@@ -14,10 +15,26 @@ bun install
 bun run start
 ```
 
-Press `Ctrl+C` to exit the TUI.
+With no input, Gitty shows the current `git diff` plus untracked files when
+changes exist, otherwise it opens a sample patch.
+
+You can also pass a patch file, read from stdin, or view staged changes:
+
+```bash
+bun run start -- path/to/change.patch
+git diff | bun run start
+bun run diff:staged
+```
+
+Inside the TUI:
+
+- `s` toggles split/stack layout.
+- `w` toggles line wrapping.
+- `h` toggles the file sidebar.
+- `q`, `Esc`, or `Ctrl+C` exits.
 
 ## Notes
 
-OpenTUI's native renderer examples use Bun. Node.js can import portable
-OpenTUI packages, but creating a native renderer from Node.js requires
-Node.js 26.3.0 with experimental FFI enabled.
+This app uses `hunkdiff/opentui`, which declares OpenTUI and React as peer
+dependencies. The installed OpenTUI package versions are aligned to Hunk's
+current peer range.

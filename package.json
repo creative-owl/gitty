@@ -1,18 +1,24 @@
 {
   "name": "gitty",
-  "module": "src/index.ts",
+  "module": "src/index.tsx",
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run src/index.ts",
-    "dev": "bun --watch src/index.ts",
+    "start": "bun run src/index.tsx",
+    "dev": "bun --watch src/index.tsx",
+    "diff": "bun run src/index.tsx",
+    "diff:staged": "bun run src/index.tsx --staged",
     "typecheck": "bunx tsc --noEmit"
   },
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/react": "^19.2.17",
+    "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@opentui/core": "^0.4.1"
+    "@opentui/core": "^0.1.89",
+    "@opentui/react": "^0.1.89",
+    "hunkdiff": "^0.15.3",
+    "react": "^19.2.4"
   }
 }
