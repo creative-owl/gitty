@@ -1,0 +1,18 @@
+{
+  "name": "gitty",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "@types/bun": "latest"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.4.1"
+  }
+}
