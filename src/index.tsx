@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, join, resolve } from "node:path"
-import { createCliRenderer } from "@opentui/core"
+import { createCliRenderer, type MouseEvent } from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { getFiletypeFromFileName } from "@pierre/diffs"
 import {
@@ -78,9 +78,12 @@ const DEFAULT_THEME: HunkDiffThemeName = "catppuccin-macchiato"
 const NULL_DIFF_PATH = "/dev/null"
 const OPEN_REPOSITORY_SUGGESTION_ROWS = 5
 const PULL_REQUEST_SECTION_LIMIT = 3
+const REPOSITORY_CLOSE_CONTROL_WIDTH = 3
 const REPOSITORY_SIDEBAR_MAX_WIDTH = 45
 const REPOSITORY_SIDEBAR_MIN_WIDTH = 29
 const REPOSITORY_SIDEBAR_WIDTH_RATIO = 0.36
+const STATUS_OVERLAY_MAX_WIDTH = 56
+const STATUS_OVERLAY_MIN_WIDTH = 24
 
 const MACCHIATO = {
   green: "#a6da95",
@@ -791,12 +794,14 @@ function createPullRequestSectionRows(pullRequests: PullRequestSummary[]) {
 
 function RepositorySidebar({
   activeRepositoryId,
+  onCloseRepository,
   onOpenRepository,
   onSelectRepository,
   width,
   repositories,
 }: {
   activeRepositoryId: string
+  onCloseRepository: (repositoryId: string) => void
   onOpenRepository: () => void
   onSelectRepository: (repositoryId: string) => void
   width: number
@@ -834,20 +839,34 @@ function RepositorySidebar({
           const active = repository.id === activeRepositoryId
           const pullRequestRows = createPullRequestSidebarRows(repository.pullRequests)
           const selectRepository = () => onSelectRepository(repository.id)
+          const closeRepository = (event: MouseEvent) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onCloseRepository(repository.id)
+          }
+          const nameWidth = Math.max(1, contentWidth - REPOSITORY_CLOSE_CONTROL_WIDTH)
 
           return (
             <box
               key={repository.id}
-              style={{ width: "100%", height: 5 + pullRequestRows.length, flexDirection: "column" }}
+              style={{ width: "100%", height: 4 + pullRequestRows.length, flexDirection: "column" }}
               onMouseUp={selectRepository}
             >
-              <box style={{ width: "100%", height: 1 }} onMouseUp={selectRepository}>
-                <text fg={active ? MACCHIATO.lavender : MACCHIATO.text}>
-                  {fitText(repository.name, contentWidth)}
-                </text>
-              </box>
-              <box style={{ width: "100%", height: 1 }} onMouseUp={selectRepository}>
-                <text fg={MACCHIATO.subtext0}>{fitText(repository.path, contentWidth)}</text>
+              <box
+                style={{ width: "100%", height: 1, flexDirection: "row" }}
+                onMouseUp={selectRepository}
+              >
+                <box style={{ width: nameWidth, height: 1 }} onMouseUp={selectRepository}>
+                  <text fg={active ? MACCHIATO.lavender : MACCHIATO.text}>
+                    {fitText(repository.name, nameWidth)}
+                  </text>
+                </box>
+                <box
+                  style={{ width: REPOSITORY_CLOSE_CONTROL_WIDTH, height: 1 }}
+                  onMouseUp={closeRepository}
+                >
+                  <text fg={MACCHIATO.red}>{fitText(" x", REPOSITORY_CLOSE_CONTROL_WIDTH)}</text>
+                </box>
               </box>
               <box
                 style={{
@@ -970,6 +989,45 @@ function OpenRepositoryPrompt({
   )
 }
 
+function StatusOverlay({
+  status,
+  width,
+}: {
+  status?: OpenRepositoryStatus
+  width: number
+}) {
+  if (!status) {
+    return null
+  }
+
+  const overlayWidth = Math.max(
+    1,
+    Math.min(width, Math.min(STATUS_OVERLAY_MAX_WIDTH, Math.max(STATUS_OVERLAY_MIN_WIDTH, status.text.length + 4))),
+  )
+  const contentWidth = Math.max(1, overlayWidth - 4)
+
+  return (
+    <box
+      style={{
+        position: "absolute",
+        right: 1,
+        bottom: 1,
+        zIndex: 20,
+        width: overlayWidth,
+        height: 3,
+        border: true,
+        borderStyle: "rounded",
+        borderColor: MACCHIATO.green,
+        backgroundColor: MACCHIATO.mantle,
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <text fg={MACCHIATO.green}>{fitText(status.text, contentWidth)}</text>
+    </box>
+  )
+}
+
 function GitPane({
   onSelectionChange,
   selection,
@@ -1016,7 +1074,10 @@ function GitPane({
       ) : (
         <box style={{ width: "100%", height: 3, paddingLeft: 1, paddingTop: 1 }}>
           <text fg={MACCHIATO.subtext0}>
-            {fitText("No working changes in this repository.", Math.max(1, paneContentWidth - 2))}
+            {fitText(
+              repository ? "No working changes in this repository." : "No repository open.",
+              Math.max(1, paneContentWidth - 2),
+            )}
           </text>
         </box>
       )}
@@ -1172,6 +1233,40 @@ function DiffApp({
     setStatus({ text: `Opened ${nextRepository.name}.` })
   }
 
+  function closeRepository(repositoryId: string) {
+    const closedRepositoryIndex = repositories.findIndex((repository) => repository.id === repositoryId)
+    if (closedRepositoryIndex < 0) {
+      return
+    }
+
+    const closedRepository = repositories[closedRepositoryIndex]
+    if (!closedRepository) {
+      return
+    }
+
+    const nextRepositories = repositories.filter((repository) => repository.id !== repositoryId)
+    const nextActiveRepository = nextRepositories[Math.min(closedRepositoryIndex, nextRepositories.length - 1)]
+
+    setRepositories(nextRepositories)
+    setSelections((currentSelections) => {
+      const nextSelections = { ...currentSelections }
+      delete nextSelections[repositoryId]
+      return nextSelections
+    })
+    pullRequestLoadIds.current.delete(repositoryId)
+
+    if (activeRepository?.id === repositoryId) {
+      setActiveRepositoryId(nextActiveRepository?.id ?? "")
+    }
+
+    setStatus({
+      text:
+        nextRepositories.length > 0
+          ? `Closed ${closedRepository.name}.`
+          : `Closed ${closedRepository.name}. Open another repository with o.`,
+    })
+  }
+
   function selectNextRepository() {
     if (repositories.length <= 1) {
       return
@@ -1243,6 +1338,7 @@ function DiffApp({
         paddingRight: 1,
         paddingTop: 1,
         paddingBottom: 1,
+        position: "relative",
         backgroundColor: MACCHIATO.base,
       }}
     >
@@ -1250,9 +1346,7 @@ function DiffApp({
         <text fg={MACCHIATO.lavender}>{fitText("Gitty", headerWidth)}</text>
       </box>
       <box style={{ width: "100%", height: 1 }}>
-        <text fg={status ? MACCHIATO.green : MACCHIATO.subtext0}>
-          {fitText(status?.text ?? commandText, headerWidth)}
-        </text>
+        <text fg={MACCHIATO.subtext0}>{fitText(commandText, headerWidth)}</text>
       </box>
       <box style={{ height: 1 }} />
       {isOpenPromptVisible ? (
@@ -1273,6 +1367,7 @@ function DiffApp({
       <box style={{ width: "100%", flexGrow: 1, flexDirection: "row" }}>
         <RepositorySidebar
           activeRepositoryId={activeRepository?.id ?? ""}
+          onCloseRepository={closeRepository}
           onOpenRepository={showOpenRepositoryPrompt}
           onSelectRepository={setActiveRepositoryId}
           width={repositoryWidth}
@@ -1287,6 +1382,7 @@ function DiffApp({
           repository={activeRepository}
         />
       </box>
+      <StatusOverlay status={status} width={headerWidth} />
     </box>
   )
 }
