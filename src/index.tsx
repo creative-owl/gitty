@@ -163,7 +163,27 @@ type PullRequestTimelineItem = {
   body: string
   createdAt: string
   kind: "comment" | "review"
+  reviewThreads?: PullRequestReviewThread[]
   state?: string
+}
+
+type PullRequestReviewThread = PullRequestReviewComment & {
+  replies: PullRequestReviewComment[]
+}
+
+type PullRequestReviewComment = {
+  author: string
+  body: string
+  createdAt: string
+  id: number
+  line?: number
+  parentId?: number
+  path?: string
+}
+
+type PullRequestReviewContext = {
+  comments: unknown[]
+  reviews: unknown[]
 }
 
 type PullRequestTab = "diff" | "discussion"
@@ -897,8 +917,10 @@ async function readGhPullRequestDetail(
       }
     }
 
+    const reviewContext = await readGhPullRequestReviewContext(repositoryPath, pullRequestNumber)
+
     return {
-      detail: parsePullRequestDetail(stdout),
+      detail: parsePullRequestDetail(stdout, reviewContext),
       status: "loaded",
     }
   } catch (error) {
@@ -907,6 +929,59 @@ async function readGhPullRequestDetail(
       status: "unavailable",
     }
   }
+}
+
+async function readGhPullRequestReviewContext(
+  repositoryPath: string,
+  pullRequestNumber: number,
+): Promise<PullRequestReviewContext | undefined> {
+  const [reviews, comments] = await Promise.all([
+    readGhApiPaginatedArray(repositoryPath, `repos/{owner}/{repo}/pulls/${pullRequestNumber}/reviews`),
+    readGhApiPaginatedArray(repositoryPath, `repos/{owner}/{repo}/pulls/${pullRequestNumber}/comments`),
+  ])
+
+  if (!reviews && !comments) {
+    return undefined
+  }
+
+  return {
+    comments: comments ?? [],
+    reviews: reviews ?? [],
+  }
+}
+
+async function readGhApiPaginatedArray(repositoryPath: string, endpoint: string): Promise<unknown[] | undefined> {
+  try {
+    const process = Bun.spawn(["gh", "api", endpoint, "--paginate", "--slurp"], {
+      cwd: repositoryPath,
+      env: createGhEnvironment(),
+      stderr: "pipe",
+      stdin: "ignore",
+      stdout: "pipe",
+    })
+
+    const [exitCode, stdout] = await Promise.all([
+      process.exited,
+      new Response(process.stdout).text(),
+      new Response(process.stderr).text(),
+    ])
+    if (exitCode !== 0) {
+      return undefined
+    }
+
+    return parseGhPaginatedArray(stdout)
+  } catch {
+    return undefined
+  }
+}
+
+function parseGhPaginatedArray(stdout: string): unknown[] {
+  const parsed = JSON.parse(stdout) as unknown
+  if (!Array.isArray(parsed)) {
+    return []
+  }
+
+  return parsed.every(Array.isArray) ? parsed.flatMap((page) => page) : parsed
 }
 
 async function readGhPullRequestDiff(
@@ -1133,7 +1208,7 @@ function parsePullRequestSummaries(stdout: string): PullRequestSummary[] {
   })
 }
 
-function parsePullRequestDetail(stdout: string): PullRequestDetail {
+function parsePullRequestDetail(stdout: string, reviewContext?: PullRequestReviewContext): PullRequestDetail {
   const parsed = JSON.parse(stdout) as unknown
   if (!isRecord(parsed)) {
     throw new SyntaxError("PR detail response must be an object.")
@@ -1144,7 +1219,7 @@ function parsePullRequestDetail(stdout: string): PullRequestDetail {
     author: readPersonName(parsed.author) || "Unknown",
     body: readString(parsed.body).trim(),
     checkState: resolvePullRequestCheckState(parsed.statusCheckRollup),
-    comments: parsePullRequestTimeline(parsed.comments, parsed.reviews || parsed.latestReviews),
+    comments: parsePullRequestTimeline(parsed.comments, parsed.reviews || parsed.latestReviews, reviewContext),
     labels: parsePullRequestLabels(parsed.labels),
     number: typeof parsed.number === "number" ? parsed.number : 0,
     reviewDecision: formatGitHubStateLabel(parsed.reviewDecision),
@@ -1154,7 +1229,11 @@ function parsePullRequestDetail(stdout: string): PullRequestDetail {
   }
 }
 
-function parsePullRequestTimeline(comments: unknown, latestReviews: unknown): PullRequestTimelineItem[] {
+function parsePullRequestTimeline(
+  comments: unknown,
+  latestReviews: unknown,
+  reviewContext?: PullRequestReviewContext,
+): PullRequestTimelineItem[] {
   const commentItems = asArray(comments).flatMap((comment) => {
     if (!isRecord(comment)) {
       return []
@@ -1175,11 +1254,13 @@ function parsePullRequestTimeline(comments: unknown, latestReviews: unknown): Pu
     ]
   })
 
-  const reviewItems = asArray(latestReviews).flatMap((review) => {
+  const reviewCommentGroups = createReviewCommentGroups(reviewContext?.comments ?? [])
+  const reviewItems = (reviewContext?.reviews.length ? reviewContext.reviews : asArray(latestReviews)).flatMap((review) => {
     if (!isRecord(review)) {
       return []
     }
 
+    const reviewId = readNumber(review.id) ?? readNumber(review.databaseId)
     const state = formatGitHubStateLabel(review.state)
     const body = readString(review.body).trim()
     if (!body && !state) {
@@ -1188,16 +1269,89 @@ function parsePullRequestTimeline(comments: unknown, latestReviews: unknown): Pu
 
     return [
       {
-        author: readPersonName(review.author) || "Unknown",
+        author: readPersonName(review.author) || readPersonName(review.user) || "Unknown",
         body: body || `Review: ${state}`,
-        createdAt: readString(review.submittedAt) || readString(review.createdAt),
+        createdAt: readString(review.submittedAt) || readString(review.submitted_at) || readString(review.createdAt),
         kind: "review" as const,
+        reviewThreads: reviewId ? createReviewThreads(reviewCommentGroups.get(reviewId) ?? []) : [],
         state,
       },
     ]
   })
 
   return [...commentItems, ...reviewItems].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+}
+
+function createReviewCommentGroups(comments: unknown[]): Map<number, PullRequestReviewComment[]> {
+  const commentsByReviewId = new Map<number, PullRequestReviewComment[]>()
+
+  for (const comment of comments) {
+    if (!isRecord(comment)) {
+      continue
+    }
+
+    const reviewId = readNumber(comment.pull_request_review_id) ?? readNumber(comment.pullRequestReviewId)
+    const parsedComment = parseReviewComment(comment)
+    if (!reviewId || !parsedComment) {
+      continue
+    }
+
+    const reviewComments = commentsByReviewId.get(reviewId) ?? []
+    reviewComments.push(parsedComment)
+    commentsByReviewId.set(reviewId, reviewComments)
+  }
+
+  return commentsByReviewId
+}
+
+function parseReviewComment(comment: Record<string, unknown>): PullRequestReviewComment | undefined {
+  const id = readNumber(comment.id)
+  const body = readString(comment.body).trim()
+  if (!id || !body) {
+    return undefined
+  }
+
+  const line = readNumber(comment.line) ?? readNumber(comment.original_line)
+  return {
+    author: readPersonName(comment.user) || readPersonName(comment.author) || "Unknown",
+    body,
+    createdAt: readString(comment.created_at) || readString(comment.createdAt),
+    id,
+    line,
+    parentId: readNumber(comment.in_reply_to_id) ?? readNumber(comment.inReplyToId),
+    path: readString(comment.path),
+  }
+}
+
+function createReviewThreads(comments: PullRequestReviewComment[]): PullRequestReviewThread[] {
+  const commentsById = new Map(comments.map((comment) => [comment.id, comment]))
+  const repliesByParentId = new Map<number, PullRequestReviewComment[]>()
+
+  for (const comment of comments) {
+    if (!comment.parentId || !commentsById.has(comment.parentId)) {
+      continue
+    }
+
+    const replies = repliesByParentId.get(comment.parentId) ?? []
+    replies.push(comment)
+    repliesByParentId.set(comment.parentId, replies)
+  }
+
+  return comments
+    .filter((comment) => !comment.parentId || !commentsById.has(comment.parentId))
+    .map((comment) => ({
+      ...comment,
+      replies: sortReviewComments(repliesByParentId.get(comment.id) ?? []),
+    }))
+    .sort(compareReviewComments)
+}
+
+function sortReviewComments(comments: PullRequestReviewComment[]) {
+  return [...comments].sort(compareReviewComments)
+}
+
+function compareReviewComments(a: PullRequestReviewComment, b: PullRequestReviewComment) {
+  return a.createdAt.localeCompare(b.createdAt) || a.id - b.id
 }
 
 function parsePullRequestReviewers(latestReviews: unknown, reviewRequests: unknown): PullRequestReviewer[] {
@@ -1284,6 +1438,10 @@ function readPersonName(value: unknown) {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value : ""
+}
+
+function readNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
 function asArray(value: unknown): unknown[] {
@@ -2955,7 +3113,6 @@ function CommentChain({
   comments: PullRequestTimelineItem[]
   width: number
 }) {
-  const changesRequestedComments = comments.filter(isChangesRequestedTimelineItem)
   const commentBlockWidth = Math.max(1, Math.floor(width * 0.9))
   const leftGutterWidth = Math.max(0, width - commentBlockWidth)
 
@@ -2965,12 +3122,12 @@ function CommentChain({
       <box style={{ width: "100%", height: 1 }}>
         <text fg={MACCHIATO.mauve}>{fitText("Comment chain", width)}</text>
       </box>
-      {changesRequestedComments.length === 0 ? (
+      {comments.length === 0 ? (
         <box style={{ width: "100%", height: 1 }}>
-          <text fg={MACCHIATO.subtext0}>{fitText("No changes requested comments.", width)}</text>
+          <text fg={MACCHIATO.subtext0}>{fitText("No comments yet.", width)}</text>
         </box>
       ) : (
-        changesRequestedComments.map((comment, index) => (
+        comments.map((comment, index) => (
           <box
             key={`pull-request-comment-row:${index}`}
             style={{ width: "100%", flexDirection: "row", marginBottom: 1 }}
@@ -2982,10 +3139,6 @@ function CommentChain({
       )}
     </box>
   )
-}
-
-function isChangesRequestedTimelineItem(comment: PullRequestTimelineItem) {
-  return comment.kind === "review" && normalizeGitHubState(comment.state) === "CHANGES_REQUESTED"
 }
 
 function CommentBlock({
@@ -3019,8 +3172,138 @@ function CommentBlock({
         markdown={comment.body}
         width={contentWidth}
       />
+      {comment.reviewThreads?.length ? (
+        <ReviewThreadList
+          blockKeyPrefix={`pull-request-review-thread:${comment.author}:${comment.createdAt}`}
+          threads={comment.reviewThreads}
+          width={contentWidth}
+        />
+      ) : null}
     </box>
   )
+}
+
+function ReviewThreadList({
+  blockKeyPrefix,
+  threads,
+  width,
+}: {
+  blockKeyPrefix: string
+  threads: PullRequestReviewThread[]
+  width: number
+}) {
+  return (
+    <box style={{ width: "100%", flexDirection: "column" }}>
+      {threads.map((thread) => (
+        <ReviewThreadBlock
+          blockKeyPrefix={`${blockKeyPrefix}:${thread.id}`}
+          key={`${blockKeyPrefix}:${thread.id}`}
+          thread={thread}
+          width={width}
+        />
+      ))}
+    </box>
+  )
+}
+
+function ReviewThreadBlock({
+  blockKeyPrefix,
+  thread,
+  width,
+}: {
+  blockKeyPrefix: string
+  thread: PullRequestReviewThread
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+  const replyWidth = Math.max(1, width - 2)
+  const location = formatReviewCommentLocation(thread)
+
+  return (
+    <box style={{ width: "100%", flexDirection: "column", marginTop: 1 }}>
+      <box
+        style={{
+          width: "100%",
+          border: true,
+          borderStyle: "rounded",
+          borderColor: MACCHIATO.surface2,
+          backgroundColor: MACCHIATO.base,
+          flexDirection: "column",
+          paddingLeft: 1,
+          paddingRight: 1,
+        }}
+      >
+        <box style={{ width: "100%", height: 1 }}>
+          <text fg={MACCHIATO.lavender}>
+            {fitText(`${thread.author}${location ? ` - ${location}` : ""}`, contentWidth)}
+          </text>
+        </box>
+        <MarkdownContent
+          blockKeyPrefix={blockKeyPrefix}
+          emptyText="No content."
+          markdown={thread.body}
+          width={contentWidth}
+        />
+      </box>
+      {thread.replies.map((reply) => (
+        <box
+          key={`${blockKeyPrefix}:reply:${reply.id}`}
+          style={{ width: "100%", flexDirection: "row", marginTop: 1 }}
+        >
+          <box style={{ width: 2 }} />
+          <ReviewReplyBlock
+            blockKeyPrefix={`${blockKeyPrefix}:reply:${reply.id}`}
+            reply={reply}
+            width={replyWidth}
+          />
+        </box>
+      ))}
+    </box>
+  )
+}
+
+function ReviewReplyBlock({
+  blockKeyPrefix,
+  reply,
+  width,
+}: {
+  blockKeyPrefix: string
+  reply: PullRequestReviewComment
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+
+  return (
+    <box
+      style={{
+        width,
+        border: true,
+        borderStyle: "rounded",
+        borderColor: MACCHIATO.surface2,
+        backgroundColor: MACCHIATO.base,
+        flexDirection: "column",
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <box style={{ width: "100%", height: 1 }}>
+        <text fg={MACCHIATO.lavender}>{fitText(reply.author, contentWidth)}</text>
+      </box>
+      <MarkdownContent
+        blockKeyPrefix={blockKeyPrefix}
+        emptyText="No content."
+        markdown={reply.body}
+        width={contentWidth}
+      />
+    </box>
+  )
+}
+
+function formatReviewCommentLocation(comment: PullRequestReviewComment) {
+  if (!comment.path) {
+    return ""
+  }
+  return comment.line ? `${comment.path}:${comment.line}` : comment.path
 }
 
 function MarkdownContent({
