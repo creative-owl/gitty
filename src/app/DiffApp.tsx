@@ -1,0 +1,494 @@
+import { CliRenderEvents, type Selection } from "@opentui/core"
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import type { HunkDiffSelection, HunkDiffThemeName } from "hunkdiff/opentui"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { defaultSelection, normalizeSelection } from "../features/diff/model/diff"
+import { GitPane } from "../features/diff/ui/GitPane"
+import { createPathSuggestions } from "../features/open-repository/model/pathSuggestions"
+import { OpenRepositoryPrompt } from "../features/open-repository/ui/OpenRepositoryPrompt"
+import {
+  loadRepositoryPullRequests,
+  readGhPullRequestDetail,
+  readGhPullRequestDiff,
+} from "../features/pull-requests/model/api"
+import { findPullRequestSummary } from "../features/pull-requests/model/sidebar"
+import type { PullRequestSummary } from "../features/pull-requests/model/types"
+import { PullRequestPane } from "../features/pull-requests/ui/PullRequestPane"
+import { openGitRepository } from "../features/repositories/model/repositories"
+import type { RepositoryView } from "../features/repositories/model/types"
+import { RepositorySidebar } from "../features/repository-sidebar/ui/RepositorySidebar"
+import {
+  copyTextToClipboard,
+  formatCopiedSelectionStatus,
+  openExternalUrl,
+} from "../shared/lib/platform"
+import { fitText, pluralize } from "../shared/lib/text"
+import { MACCHIATO } from "../shared/theme"
+import { StatusOverlay, type OpenRepositoryStatus } from "../widgets/status-overlay/StatusOverlay"
+import type { ActivePane } from "./model/types"
+
+const REPOSITORY_SIDEBAR_MAX_WIDTH = 45
+const REPOSITORY_SIDEBAR_MIN_WIDTH = 29
+const REPOSITORY_SIDEBAR_WIDTH_RATIO = 0.36
+const STATUS_OVERLAY_DISMISS_MS = 5000
+
+export function DiffApp({
+  initialRepositories,
+  staged,
+  theme,
+}: {
+  initialRepositories: RepositoryView[]
+  staged: boolean
+  theme: HunkDiffThemeName
+}) {
+  const renderer = useRenderer()
+  const terminal = useTerminalDimensions()
+  const pullRequestLoadIds = useRef(new Set<string>())
+  const [repositories, setRepositories] = useState<RepositoryView[]>(initialRepositories)
+  const firstRepository = repositories[0]
+  const [activePane, setActivePane] = useState<ActivePane>(() => ({
+    kind: "working",
+    repositoryId: firstRepository?.id ?? "",
+  }))
+  const [selections, setSelections] = useState<Record<string, HunkDiffSelection>>(() =>
+    Object.fromEntries(repositories.map((repository) => [repository.id, defaultSelection(repository.files)])),
+  )
+  const [isOpenPromptVisible, setOpenPromptVisible] = useState(false)
+  const [repositoryPathInput, setRepositoryPathInput] = useState("")
+  const [selectedPathSuggestionIndex, setSelectedPathSuggestionIndex] = useState(0)
+  const [openPromptError, setOpenPromptError] = useState("")
+  const [status, setStatus] = useState<OpenRepositoryStatus>()
+  const activeRepositoryId = activePane.repositoryId
+
+  const activeRepository = useMemo(
+    () => repositories.find((repository) => repository.id === activeRepositoryId) ?? firstRepository,
+    [activeRepositoryId, firstRepository, repositories],
+  )
+  const activePullRequestSummary =
+    activePane.kind === "pull-request" && activeRepository
+      ? findPullRequestSummary(activeRepository, activePane.pullRequestNumber)
+      : undefined
+  const activePullRequestDetailState =
+    activePane.kind === "pull-request" ? activeRepository?.pullRequestDetails?.[activePane.pullRequestNumber] : undefined
+  const activePullRequestDiffState =
+    activePane.kind === "pull-request" ? activeRepository?.pullRequestDiffs?.[activePane.pullRequestNumber] : undefined
+  const files = activeRepository?.files ?? []
+  const selection = normalizeSelection(files, activeRepository ? selections[activeRepository.id] : undefined)
+  const shellWidth = Math.max(1, terminal.width - 2)
+  const repositoryWidth = Math.min(
+    REPOSITORY_SIDEBAR_MAX_WIDTH,
+    Math.max(REPOSITORY_SIDEBAR_MIN_WIDTH, Math.floor(shellWidth * REPOSITORY_SIDEBAR_WIDTH_RATIO)),
+  )
+  const gitPaneWidth = Math.max(1, shellWidth - repositoryWidth - 1)
+  const headerWidth = shellWidth
+  const commandText = `${pluralize(repositories.length, "repository", "repositories")}  |  o open repository  |  tab/click repo or PR  |  q quit`
+  const pathSuggestions = useMemo(() => createPathSuggestions(repositoryPathInput), [repositoryPathInput])
+  const normalizedPathSuggestionIndex =
+    pathSuggestions.length > 0 ? Math.min(selectedPathSuggestionIndex, pathSuggestions.length - 1) : 0
+
+  useEffect(() => {
+    for (const repository of repositories) {
+      if (repository.pullRequests?.status !== "loading" || pullRequestLoadIds.current.has(repository.id)) {
+        continue
+      }
+
+      pullRequestLoadIds.current.add(repository.id)
+      void loadRepositoryPullRequests(repository.path).then((pullRequests) => {
+        setRepositories((currentRepositories) =>
+          currentRepositories.map((currentRepository) =>
+            currentRepository.id === repository.id ? { ...currentRepository, pullRequests } : currentRepository,
+          ),
+        )
+      })
+    }
+  }, [repositories])
+
+  useEffect(() => {
+    if (activePane.kind !== "pull-request" || !activeRepository || activePullRequestDetailState) {
+      return
+    }
+
+    const repositoryId = activeRepository.id
+    const repositoryPath = activeRepository.path
+    const pullRequestNumber = activePane.pullRequestNumber
+
+    setRepositories((currentRepositories) =>
+      currentRepositories.map((currentRepository) =>
+        currentRepository.id === repositoryId
+          ? {
+              ...currentRepository,
+              pullRequestDetails: {
+                ...(currentRepository.pullRequestDetails ?? {}),
+                [pullRequestNumber]: { status: "loading" },
+              },
+            }
+          : currentRepository,
+      ),
+    )
+
+    void readGhPullRequestDetail(repositoryPath, pullRequestNumber).then((detailState) => {
+      setRepositories((currentRepositories) =>
+        currentRepositories.map((currentRepository) =>
+          currentRepository.id === repositoryId
+            ? {
+                ...currentRepository,
+                pullRequestDetails: {
+                  ...(currentRepository.pullRequestDetails ?? {}),
+                  [pullRequestNumber]: detailState,
+                },
+              }
+            : currentRepository,
+        ),
+      )
+    })
+  }, [activePane, activeRepository, activePullRequestDetailState])
+
+  useEffect(() => {
+    if (activePane.kind !== "pull-request" || !activeRepository || activePullRequestDiffState) {
+      return
+    }
+
+    const repositoryId = activeRepository.id
+    const repositoryPath = activeRepository.path
+    const pullRequestNumber = activePane.pullRequestNumber
+
+    setRepositories((currentRepositories) =>
+      currentRepositories.map((currentRepository) =>
+        currentRepository.id === repositoryId
+          ? {
+              ...currentRepository,
+              pullRequestDiffs: {
+                ...(currentRepository.pullRequestDiffs ?? {}),
+                [pullRequestNumber]: { status: "loading" },
+              },
+            }
+          : currentRepository,
+      ),
+    )
+
+    void readGhPullRequestDiff(repositoryPath, pullRequestNumber).then((diffState) => {
+      setRepositories((currentRepositories) =>
+        currentRepositories.map((currentRepository) =>
+          currentRepository.id === repositoryId
+            ? {
+                ...currentRepository,
+                pullRequestDiffs: {
+                  ...(currentRepository.pullRequestDiffs ?? {}),
+                  [pullRequestNumber]: diffState,
+                },
+              }
+            : currentRepository,
+        ),
+      )
+    })
+  }, [activePane, activeRepository, activePullRequestDiffState])
+
+  useEffect(() => {
+    if (!status) {
+      return
+    }
+
+    const timeout = setTimeout(() => {
+      setStatus((currentStatus) => (currentStatus === status ? undefined : currentStatus))
+    }, STATUS_OVERLAY_DISMISS_MS)
+
+    return () => clearTimeout(timeout)
+  }, [status])
+
+  useEffect(() => {
+    const copySelectionToClipboard = (selection: Selection) => {
+      const text = selection.getSelectedText()
+      if (!text) {
+        return
+      }
+
+      const result = copyTextToClipboard(renderer, text)
+      setStatus({
+        text: result.ok ? formatCopiedSelectionStatus(text) : result.message,
+      })
+    }
+
+    renderer.on(CliRenderEvents.SELECTION, copySelectionToClipboard)
+    return () => {
+      renderer.off(CliRenderEvents.SELECTION, copySelectionToClipboard)
+    }
+  }, [renderer])
+
+  function setActiveSelection(nextSelection: HunkDiffSelection) {
+    if (!activeRepository) {
+      return
+    }
+
+    setSelections((current) => ({
+      ...current,
+      [activeRepository.id]: nextSelection,
+    }))
+  }
+
+  function showOpenRepositoryPrompt() {
+    setRepositoryPathInput("")
+    setSelectedPathSuggestionIndex(0)
+    setOpenPromptError("")
+    setStatus(undefined)
+    setOpenPromptVisible(true)
+  }
+
+  function cancelOpenRepositoryPrompt() {
+    setOpenPromptVisible(false)
+    setRepositoryPathInput("")
+    setSelectedPathSuggestionIndex(0)
+    setOpenPromptError("")
+  }
+
+  function updateRepositoryPathInput(value: string) {
+    setRepositoryPathInput(value)
+    setSelectedPathSuggestionIndex(0)
+    setOpenPromptError("")
+  }
+
+  function completeSelectedPathSuggestion() {
+    const suggestion = pathSuggestions[normalizedPathSuggestionIndex]
+    if (!suggestion) {
+      return
+    }
+
+    updateRepositoryPathInput(suggestion.value)
+  }
+
+  function movePathSuggestion(delta: number) {
+    if (pathSuggestions.length === 0) {
+      return
+    }
+
+    setSelectedPathSuggestionIndex((currentIndex) => {
+      const nextIndex = currentIndex + delta
+      return (nextIndex + pathSuggestions.length) % pathSuggestions.length
+    })
+  }
+
+  function selectWorkingChanges(repositoryId: string) {
+    setActivePane({
+      kind: "working",
+      repositoryId,
+    })
+  }
+
+  function selectPullRequest(repositoryId: string, pullRequest: PullRequestSummary) {
+    setActivePane({
+      kind: "pull-request",
+      pullRequestNumber: pullRequest.number,
+      repositoryId,
+    })
+  }
+
+  function openPullRequestUrl(url: string) {
+    const message = openExternalUrl(url)
+    setStatus({
+      text: message ?? "Opening pull request in browser.",
+    })
+  }
+
+  function submitOpenRepository(input: string) {
+    const directory = input.trim()
+    if (!directory) {
+      setOpenPromptError("Enter a git repository path.")
+      return
+    }
+
+    let nextRepository: RepositoryView
+    try {
+      nextRepository = openGitRepository(directory, staged)
+    } catch (error) {
+      setOpenPromptError(error instanceof Error ? error.message : String(error))
+      return
+    }
+
+    const existingRepository = repositories.find((repository) => repository.path === nextRepository.path)
+    if (existingRepository) {
+      selectWorkingChanges(existingRepository.id)
+      setOpenPromptVisible(false)
+      setRepositoryPathInput("")
+      setOpenPromptError("")
+      setStatus({ text: `Repository already open: ${existingRepository.name}.` })
+      return
+    }
+
+    setRepositories((currentRepositories) => [...currentRepositories, nextRepository])
+    setSelections((currentSelections) => ({
+      ...currentSelections,
+      [nextRepository.id]: defaultSelection(nextRepository.files),
+    }))
+    selectWorkingChanges(nextRepository.id)
+    setOpenPromptVisible(false)
+    setRepositoryPathInput("")
+    setOpenPromptError("")
+    setStatus({ text: `Opened ${nextRepository.name}.` })
+  }
+
+  function closeRepository(repositoryId: string) {
+    const closedRepositoryIndex = repositories.findIndex((repository) => repository.id === repositoryId)
+    if (closedRepositoryIndex < 0) {
+      return
+    }
+
+    const closedRepository = repositories[closedRepositoryIndex]
+    if (!closedRepository) {
+      return
+    }
+
+    const nextRepositories = repositories.filter((repository) => repository.id !== repositoryId)
+    const nextActiveRepository = nextRepositories[Math.min(closedRepositoryIndex, nextRepositories.length - 1)]
+
+    setRepositories(nextRepositories)
+    setSelections((currentSelections) => {
+      const nextSelections = { ...currentSelections }
+      delete nextSelections[repositoryId]
+      return nextSelections
+    })
+    pullRequestLoadIds.current.delete(repositoryId)
+
+    if (activeRepository?.id === repositoryId) {
+      selectWorkingChanges(nextActiveRepository?.id ?? "")
+    }
+
+    setStatus({
+      text:
+        nextRepositories.length > 0
+          ? `Closed ${closedRepository.name}.`
+          : `Closed ${closedRepository.name}. Open another repository with o.`,
+    })
+  }
+
+  function selectNextRepository() {
+    if (repositories.length <= 1) {
+      return
+    }
+
+    const currentIndex = Math.max(
+      0,
+      repositories.findIndex((repository) => repository.id === activeRepository?.id),
+    )
+    const nextRepository = repositories[(currentIndex + 1) % repositories.length]
+    if (nextRepository) {
+      selectWorkingChanges(nextRepository.id)
+    }
+  }
+
+  useKeyboard((key) => {
+    const name = key.name?.toLowerCase() ?? ""
+    const sequence = key.sequence?.toLowerCase()
+
+    if (isOpenPromptVisible) {
+      if (name === "escape") {
+        key.preventDefault()
+        cancelOpenRepositoryPrompt()
+        return
+      }
+
+      if (name === "tab" || sequence === "\t") {
+        key.preventDefault()
+        completeSelectedPathSuggestion()
+        return
+      }
+
+      if (name === "up" || name === "kpup") {
+        key.preventDefault()
+        movePathSuggestion(-1)
+        return
+      }
+
+      if (name === "down" || name === "kpdown") {
+        key.preventDefault()
+        movePathSuggestion(1)
+        return
+      }
+      return
+    }
+
+    if (name === "escape" || name === "q" || sequence === "q") {
+      renderer.destroy()
+      return
+    }
+
+    if (name === "o" || sequence === "o") {
+      showOpenRepositoryPrompt()
+      return
+    }
+
+    if (name === "tab" || sequence === "\t") {
+      selectNextRepository()
+    }
+  })
+
+  return (
+    <box
+      style={{
+        width: "100%",
+        height: "100%",
+        flexDirection: "column",
+        paddingLeft: 1,
+        paddingRight: 1,
+        paddingTop: 1,
+        paddingBottom: 1,
+        position: "relative",
+        backgroundColor: MACCHIATO.base,
+      }}
+    >
+      <box style={{ width: "100%", height: 1 }}>
+        <text fg={MACCHIATO.lavender}>{fitText("Gitty", headerWidth)}</text>
+      </box>
+      <box style={{ width: "100%", height: 1 }}>
+        <text fg={MACCHIATO.subtext0}>{fitText(commandText, headerWidth)}</text>
+      </box>
+      <box style={{ height: 1 }} />
+      {isOpenPromptVisible ? (
+        <>
+          <OpenRepositoryPrompt
+            message={openPromptError}
+            onCompleteSuggestion={updateRepositoryPathInput}
+            onInput={updateRepositoryPathInput}
+            onSubmit={submitOpenRepository}
+            selectedSuggestionIndex={normalizedPathSuggestionIndex}
+            suggestions={pathSuggestions}
+            value={repositoryPathInput}
+            width={headerWidth}
+          />
+          <box style={{ height: 1 }} />
+        </>
+      ) : null}
+      <box style={{ width: "100%", flexGrow: 1, flexDirection: "row" }}>
+        <RepositorySidebar
+          activePane={activePane}
+          activeRepositoryId={activeRepository?.id ?? ""}
+          onCloseRepository={closeRepository}
+          onOpenRepository={showOpenRepositoryPrompt}
+          onSelectPullRequest={selectPullRequest}
+          onSelectWorkingChanges={selectWorkingChanges}
+          width={repositoryWidth}
+          repositories={repositories}
+        />
+        <box style={{ width: 1, height: "100%" }} />
+        {activePane.kind === "pull-request" && activeRepository ? (
+          <PullRequestPane
+            detailState={activePullRequestDetailState}
+            diffState={activePullRequestDiffState}
+            onOpenUrl={openPullRequestUrl}
+            pullRequestNumber={activePane.pullRequestNumber}
+            summary={activePullRequestSummary}
+            theme={theme}
+            width={gitPaneWidth}
+          />
+        ) : (
+          <GitPane
+            onSelectionChange={setActiveSelection}
+            selection={selection}
+            theme={theme}
+            width={gitPaneWidth}
+            repository={activeRepository}
+          />
+        )}
+      </box>
+      <StatusOverlay status={status} width={headerWidth} />
+    </box>
+  )
+}

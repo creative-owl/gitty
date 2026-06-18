@@ -1,0 +1,152 @@
+import type { MouseEvent } from "@opentui/core"
+import type { HunkDiffThemeName } from "hunkdiff/opentui"
+import { fitText } from "../../../shared/lib/text"
+import { MACCHIATO } from "../../../shared/theme"
+import type {
+  PullRequestDetailState,
+  PullRequestDiffState,
+  PullRequestSummary,
+  PullRequestTab,
+} from "../model/types"
+import { PullRequestDiffContent } from "./PullRequestDiffContent"
+import { CommentChain, DescriptionMarkdownBlock, PullRequestTitleBlock } from "./PullRequestDiscussion"
+
+export function PullRequestContentPane({
+  activeTab,
+  detailState,
+  diffState,
+  onOpenUrl,
+  onSelectTab,
+  summary,
+  theme,
+  width,
+}: {
+  activeTab: PullRequestTab
+  detailState?: PullRequestDetailState
+  diffState?: PullRequestDiffState
+  onOpenUrl: (url: string) => void
+  onSelectTab: (tab: PullRequestTab) => void
+  summary?: PullRequestSummary
+  theme: HunkDiffThemeName
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+
+  if (!detailState || detailState.status === "loading") {
+    return (
+      <box
+        title={summary ? `PR #${summary.number}` : "Pull Request"}
+        style={{
+          width,
+          height: "100%",
+          border: true,
+          borderStyle: "rounded",
+          borderColor: MACCHIATO.surface2,
+          backgroundColor: MACCHIATO.mantle,
+          paddingLeft: 1,
+          paddingRight: 1,
+        }}
+      >
+        <text fg={MACCHIATO.subtext0}>{fitText("Loading pull request...", contentWidth)}</text>
+      </box>
+    )
+  }
+
+  if (detailState.status === "unavailable") {
+    return (
+      <box
+        title={summary ? `PR #${summary.number}` : "Pull Request"}
+        style={{
+          width,
+          height: "100%",
+          border: true,
+          borderStyle: "rounded",
+          borderColor: MACCHIATO.red,
+          backgroundColor: MACCHIATO.mantle,
+          paddingLeft: 1,
+          paddingRight: 1,
+        }}
+      >
+        <text fg={MACCHIATO.red}>{fitText(detailState.message, contentWidth)}</text>
+      </box>
+    )
+  }
+
+  const detail = detailState.detail
+
+  return (
+    <box
+      title={`PR #${detail.number}`}
+      style={{
+        width,
+        height: "100%",
+        border: true,
+        borderStyle: "rounded",
+        borderColor: MACCHIATO.surface2,
+        backgroundColor: MACCHIATO.mantle,
+        flexDirection: "column",
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <PullRequestTabBar activeTab={activeTab} onSelectTab={onSelectTab} width={contentWidth} />
+      {activeTab === "discussion" ? (
+        <scrollbox style={{ width: "100%", flexGrow: 1 }} scrollY>
+          <PullRequestTitleBlock detail={detail} onOpenUrl={onOpenUrl} width={contentWidth} />
+          <DescriptionMarkdownBlock markdown={detail.body} width={contentWidth} />
+          <CommentChain comments={detail.comments} width={contentWidth} />
+        </scrollbox>
+      ) : (
+        <PullRequestDiffContent diffState={diffState} theme={theme} width={contentWidth} />
+      )}
+    </box>
+  )
+}
+
+function PullRequestTabBar({
+  activeTab,
+  onSelectTab,
+  width,
+}: {
+  activeTab: PullRequestTab
+  onSelectTab: (tab: PullRequestTab) => void
+  width: number
+}) {
+  const tabs: { label: string; value: PullRequestTab }[] = [
+    { label: "Discussion", value: "discussion" },
+    { label: "Diff", value: "diff" },
+  ]
+  const tabWidth = Math.max(10, Math.min(16, Math.floor(width / tabs.length)))
+
+  return (
+    <box style={{ width: "100%", height: 2, flexDirection: "column", backgroundColor: MACCHIATO.mantle }}>
+      <box style={{ width: "100%", height: 1, flexDirection: "row", backgroundColor: MACCHIATO.mantle }}>
+        {tabs.map((tab) => {
+          const selected = activeTab === tab.value
+          const selectTab = (event: MouseEvent) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onSelectTab(tab.value)
+          }
+
+          return (
+            <box
+              key={tab.value}
+              style={{
+                width: tabWidth,
+                height: 1,
+                backgroundColor: selected ? MACCHIATO.surface0 : MACCHIATO.mantle,
+              }}
+              onMouseUp={selectTab}
+            >
+              <text fg={selected ? MACCHIATO.mauve : MACCHIATO.text}>
+                {fitText(`${selected ? ">" : " "} ${tab.label}`, tabWidth)}
+              </text>
+            </box>
+          )
+        })}
+      </box>
+      <box style={{ width: "100%", height: 1 }} />
+    </box>
+  )
+}
