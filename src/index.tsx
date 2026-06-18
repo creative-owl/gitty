@@ -1,7 +1,14 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, join, resolve } from "node:path"
-import { createCliRenderer, type MouseEvent } from "@opentui/core"
+import {
+  CliRenderEvents,
+  createCliRenderer,
+  SyntaxStyle,
+  type CliRenderer,
+  type MouseEvent,
+  type Selection,
+} from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { getFiletypeFromFileName } from "@pierre/diffs"
 import {
@@ -12,6 +19,7 @@ import {
   type HunkDiffSelection,
   type HunkDiffThemeName,
 } from "hunkdiff/opentui"
+import { Lexer, type Token, type Tokens } from "marked"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 type PatchSource = {
@@ -30,6 +38,7 @@ type RepositoryView = {
   path: string
   files: HunkDiffFile[]
   pullRequestDetails?: Record<number, PullRequestDetailState>
+  pullRequestDiffs?: Record<number, PullRequestDiffState>
   pullRequests?: RepositoryPullRequests
   stats: {
     additions: number
@@ -48,6 +57,21 @@ type CliOptions = {
 
 type OpenRepositoryStatus = {
   text: string
+}
+
+type ClipboardCopyResult =
+  | {
+      method: string
+      ok: true
+    }
+  | {
+      message: string
+      ok: false
+    }
+
+type ClipboardCommand = {
+  command: string[]
+  method: string
 }
 
 type PathSuggestion = {
@@ -82,6 +106,19 @@ type PullRequestDetailState =
     }
   | {
       detail: PullRequestDetail
+      status: "loaded"
+    }
+  | {
+      message: string
+      status: "unavailable"
+    }
+
+type PullRequestDiffState =
+  | {
+      status: "loading"
+    }
+  | {
+      files: HunkDiffFile[]
       status: "loaded"
     }
   | {
@@ -129,10 +166,126 @@ type PullRequestTimelineItem = {
   state?: string
 }
 
+type PullRequestTab = "diff" | "discussion"
+
 type TextRow = {
   backgroundColor?: string
   color: string
   text: string
+}
+
+type GithubAlertType = "caution" | "important" | "note" | "tip" | "warning"
+
+type MarkdownRenderBlock =
+  | {
+      content: string
+      kind: "markdown"
+    }
+  | MarkdownListBlock
+  | {
+      body: string
+      kind: "details"
+      open: boolean
+      summary: string
+    }
+  | {
+      content: string
+      kind: "mermaid"
+    }
+  | {
+      alertType: GithubAlertType
+      content: string
+      kind: "github-alert"
+    }
+  | {
+      content: string
+      kind: "quote"
+    }
+
+type MarkdownListBlock = {
+  items: MarkdownListItem[]
+  kind: "list"
+  ordered: boolean
+  start: number
+}
+
+type MarkdownListItem = {
+  checked?: boolean
+  children: MarkdownListBlock[]
+  content: string
+  task: boolean
+}
+
+type TerminalImageRun = {
+  backgroundColor: string
+  color: string
+  text: string
+}
+
+type TerminalImageRow = {
+  runs: TerminalImageRun[]
+}
+
+type DetailsBlock = {
+  body: string
+  open: boolean
+  summary: string
+}
+
+type DetailsTag = {
+  end: number
+  index: number
+  kind: "close" | "open"
+}
+
+type MarkdownDetailsSegment =
+  | {
+      content: string
+      kind: "details"
+    }
+  | {
+      content: string
+      kind: "text"
+    }
+
+type MermaidRenderState =
+  | {
+      status: "loading"
+    }
+  | {
+      rows: TerminalImageRow[]
+      status: "rendered"
+    }
+  | {
+      message: string
+      sourceRows: TextRow[]
+      status: "error"
+    }
+
+type SvgBox = {
+  bottom: number
+  height: number
+  left: number
+  right: number
+  top: number
+  width: number
+  x: number
+  y: number
+}
+
+type RgbColor = {
+  b: number
+  g: number
+  r: number
+}
+
+type MermaidDomWindow = Window & {
+  CSSStyleSheet: typeof CSSStyleSheet
+  Element: typeof Element
+  HTMLElement: typeof HTMLElement
+  SVGElement: typeof SVGElement
+  document: Document
+  navigator: Navigator
 }
 
 type RepositoryPullRequests =
@@ -180,6 +333,72 @@ const MACCHIATO = {
   base: "#24273a",
   mantle: "#1e2030",
 } as const
+
+const MARKDOWN_SYNTAX_STYLE = SyntaxStyle.fromStyles({
+  default: { fg: MACCHIATO.text },
+  conceal: { fg: MACCHIATO.surface2 },
+  markup: { fg: MACCHIATO.subtext0 },
+  "markup.heading": { bold: true, fg: MACCHIATO.mauve },
+  "markup.italic": { fg: MACCHIATO.text, italic: true },
+  "markup.link": { fg: MACCHIATO.blue, underline: true },
+  "markup.link.label": { fg: MACCHIATO.blue, underline: true },
+  "markup.link.url": { fg: MACCHIATO.subtext0 },
+  "markup.raw": { bg: MACCHIATO.surface0, fg: MACCHIATO.green },
+  "markup.strikethrough": { dim: true, fg: MACCHIATO.subtext0 },
+  "markup.strong": { bold: true, fg: MACCHIATO.lavender },
+})
+
+const MARKDOWN_TABLE_OPTIONS = {
+  borderColor: MACCHIATO.surface2,
+  borders: true,
+  borderStyle: "rounded",
+  cellPadding: 1,
+  outerBorder: true,
+  selectable: true,
+  style: "grid",
+  widthMode: "full",
+  wrapMode: "word",
+} as const
+
+const MARKDOWN_LIST_INDENT_WIDTH = 2
+const MERMAID_MAX_TERMINAL_ROWS = 32
+const MERMAID_MAX_TERMINAL_WIDTH = 120
+const MERMAID_MIN_TERMINAL_WIDTH = 12
+const MERMAID_RENDER_BACKGROUND = MACCHIATO.surface0
+const MERMAID_RENDER_PALETTE = [
+  MACCHIATO.base,
+  MACCHIATO.mantle,
+  MACCHIATO.surface0,
+  MACCHIATO.surface2,
+  MACCHIATO.subtext0,
+  MACCHIATO.text,
+  MACCHIATO.blue,
+  MACCHIATO.green,
+  MACCHIATO.lavender,
+  MACCHIATO.mauve,
+  MACCHIATO.red,
+  MACCHIATO.yellow,
+] as const
+
+const GITHUB_ALERTS: Record<GithubAlertType, { color: string; title: string }> = {
+  caution: { color: MACCHIATO.red, title: "Caution" },
+  important: { color: MACCHIATO.mauve, title: "Important" },
+  note: { color: MACCHIATO.blue, title: "Note" },
+  tip: { color: MACCHIATO.green, title: "Tip" },
+  warning: { color: MACCHIATO.yellow, title: "Warning" },
+}
+
+let mermaidDomReady = false
+let mermaidModulePromise: Promise<typeof import("mermaid")["default"]> | undefined
+let mermaidRenderCounter = 0
+let mermaidRenderQueue: Promise<void> = Promise.resolve()
+
+const EMPTY_DIFF_FILES: HunkDiffFile[] = []
+const nearestMermaidColorCache = new Map<string, string>()
+const mermaidPaletteRgb = MERMAID_RENDER_PALETTE.map((color) => ({
+  color,
+  rgb: hexToRgb(color),
+}))
 
 const FAILED_CHECK_STATES = new Set([
   "ACTION_REQUIRED",
@@ -690,6 +909,44 @@ async function readGhPullRequestDetail(
   }
 }
 
+async function readGhPullRequestDiff(
+  repositoryPath: string,
+  pullRequestNumber: number,
+): Promise<PullRequestDiffState> {
+  try {
+    const process = Bun.spawn(["gh", "pr", "diff", String(pullRequestNumber), "--patch"], {
+      cwd: repositoryPath,
+      env: createGhEnvironment(),
+      stderr: "pipe",
+      stdin: "ignore",
+      stdout: "pipe",
+    })
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+      process.exited,
+      new Response(process.stdout).text(),
+      new Response(process.stderr).text(),
+    ])
+
+    if (exitCode !== 0) {
+      return {
+        message: summarizeGhError(stderr),
+        status: "unavailable",
+      }
+    }
+
+    return {
+      files: stdout.trim() ? createDiffFilesFromPatch(stdout, `PR #${pullRequestNumber}`) : [],
+      status: "loaded",
+    }
+  } catch {
+    return {
+      message: "Could not load PR diff.",
+      status: "unavailable",
+    }
+  }
+}
+
 function createGhEnvironment(): Record<string, string> {
   const environment: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
@@ -757,6 +1014,95 @@ function createExternalUrlCommand(url: string): string[] | undefined {
   }
 
   return undefined
+}
+
+function copyTextToClipboard(renderer: CliRenderer, text: string): ClipboardCopyResult {
+  if (!text) {
+    return {
+      message: "No selected text to copy.",
+      ok: false,
+    }
+  }
+
+  try {
+    if (renderer.copyToClipboardOSC52(text)) {
+      return {
+        method: "terminal clipboard",
+        ok: true,
+      }
+    }
+  } catch {
+    // Fall back to platform clipboard helpers below.
+  }
+
+  const clipboardCommand = createClipboardCommand()
+  if (!clipboardCommand) {
+    return {
+      message: "Clipboard copy is not supported on this platform.",
+      ok: false,
+    }
+  }
+
+  try {
+    const result = Bun.spawnSync(clipboardCommand.command, {
+      stderr: "pipe",
+      stdin: new TextEncoder().encode(text),
+      stdout: "ignore",
+    })
+
+    if (result.exitCode === 0) {
+      return {
+        method: clipboardCommand.method,
+        ok: true,
+      }
+    }
+
+    const detail = result.stderr.toString().trim().split("\n").find(Boolean)
+    return {
+      message: detail ? `Clipboard copy failed: ${detail}` : "Clipboard copy failed.",
+      ok: false,
+    }
+  } catch {
+    return {
+      message: "Clipboard copy failed.",
+      ok: false,
+    }
+  }
+}
+
+function createClipboardCommand(): ClipboardCommand | undefined {
+  if (process.platform === "darwin") {
+    return findClipboardCommand([{ command: ["pbcopy"], method: "pbcopy" }])
+  }
+
+  if (process.platform === "win32") {
+    return findClipboardCommand([
+      { command: ["clip.exe"], method: "clip.exe" },
+      { command: ["powershell.exe", "-NoProfile", "-Command", "Set-Clipboard"], method: "PowerShell" },
+    ])
+  }
+
+  if (process.platform === "linux") {
+    return findClipboardCommand([
+      { command: ["wl-copy"], method: "wl-copy" },
+      { command: ["xclip", "-selection", "clipboard"], method: "xclip" },
+      { command: ["xsel", "--clipboard", "--input"], method: "xsel" },
+    ])
+  }
+
+  return undefined
+}
+
+function findClipboardCommand(commands: ClipboardCommand[]): ClipboardCommand | undefined {
+  return commands.find((clipboardCommand) => Bun.which(clipboardCommand.command[0] ?? ""))
+}
+
+function formatCopiedSelectionStatus(text: string) {
+  const lines = text.split(/\r\n|\r|\n/).length
+  if (lines > 1) {
+    return `Copied ${pluralize(lines, "line")} to clipboard.`
+  }
+  return `Copied ${pluralize([...text].length, "character")} to clipboard.`
 }
 
 function parsePullRequestSummaries(stdout: string): PullRequestSummary[] {
@@ -1210,131 +1556,686 @@ function stripHtmlComments(value: string) {
   return value.replace(/<!--[\s\S]*?-->/g, "")
 }
 
-function createMarkdownRows(markdown: string, width: number, emptyText = "No description."): TextRow[] {
-  const source = stripHtmlComments(markdown)
+function createMarkdownBlocks(markdown: string, emptyText = "No description."): MarkdownRenderBlock[] {
+  const source = normalizeGithubMarkdown(stripHtmlComments(markdown)).replace(/\r\n/g, "\n")
   if (!source.trim()) {
-    return [{ color: MACCHIATO.subtext0, text: emptyText }]
+    return [{ content: emptyText, kind: "markdown" }]
   }
 
-  const rows: TextRow[] = []
-  const paragraphLines: string[] = []
-  let codeLanguage = ""
-  let inCodeBlock = false
-
-  const pushBlankRow = () => {
-    if (rows.length === 0 || rows[rows.length - 1]?.text === "") {
-      return
-    }
-    rows.push({ color: MACCHIATO.subtext0, text: "" })
-  }
-  const flushParagraph = () => {
-    if (paragraphLines.length === 0) {
-      return
+  const blocks: MarkdownRenderBlock[] = []
+  for (const segment of splitMarkdownDetailsBlocks(source)) {
+    if (segment.kind === "text") {
+      pushMarkdownAndMermaidBlocks(blocks, segment.content)
+      continue
     }
 
-    pushWrappedRows(rows, formatInlineMarkdownText(paragraphLines.join(" ")), width, MACCHIATO.text)
-    paragraphLines.length = 0
-  }
-  const pushListItem = (marker: string, value: string) => {
-    const markerWidth = marker.length + 1
-    const wrappedRows = wrapText(formatInlineMarkdownText(value), Math.max(1, width - markerWidth))
-
-    wrappedRows.forEach((row, index) => {
-      rows.push({
-        color: MACCHIATO.text,
-        text: `${index === 0 ? `${marker} ` : " ".repeat(markerWidth)}${row}`,
-      })
+    blocks.push({
+      kind: "details",
+      ...parseDetailsBlock(segment.content),
     })
   }
 
-  for (const rawLine of source.replace(/\r\n/g, "\n").split("\n")) {
-    const line = rawLine.trimEnd()
-    const trimmedLine = line.trim()
+  return blocks.length > 0 ? blocks : [{ content: emptyText, kind: "markdown" }]
+}
 
-    if (trimmedLine.startsWith("```")) {
-      flushParagraph()
-      if (inCodeBlock) {
-        inCodeBlock = false
-        codeLanguage = ""
-        pushBlankRow()
+function splitMarkdownDetailsBlocks(source: string): MarkdownDetailsSegment[] {
+  const tags = collectMarkdownDetailsTags(source)
+  const segments: MarkdownDetailsSegment[] = []
+  let cursor = 0
+  let tagIndex = 0
+
+  while (tagIndex < tags.length) {
+    const openTagIndex = tags.findIndex((tag, index) => index >= tagIndex && tag.index >= cursor && tag.kind === "open")
+    if (openTagIndex === -1) {
+      break
+    }
+
+    const openTag = tags[openTagIndex]!
+    let closeTag: DetailsTag | undefined
+    let depth = 0
+
+    for (let index = openTagIndex; index < tags.length; index += 1) {
+      const tag = tags[index]!
+      if (tag.kind === "open") {
+        depth += 1
       } else {
-        inCodeBlock = true
-        codeLanguage = trimmedLine.slice(3).trim()
-        rows.push({
-          backgroundColor: MACCHIATO.surface0,
-          color: MACCHIATO.subtext0,
-          text: codeLanguage ? `code ${codeLanguage}` : "code",
-        })
+        depth -= 1
       }
-      continue
+
+      if (depth === 0) {
+        closeTag = tag
+        tagIndex = index + 1
+        break
+      }
     }
 
-    if (inCodeBlock) {
-      pushWrappedRows(rows, line || " ", width, MACCHIATO.text, MACCHIATO.surface0)
-      continue
+    if (!closeTag) {
+      break
     }
 
-    if (!trimmedLine) {
-      flushParagraph()
-      pushBlankRow()
-      continue
+    if (openTag.index > cursor) {
+      segments.push({ content: source.slice(cursor, openTag.index), kind: "text" })
     }
-
-    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(trimmedLine)
-    if (headingMatch) {
-      flushParagraph()
-      pushBlankRow()
-      pushWrappedRows(rows, formatInlineMarkdownText(headingMatch[2] ?? ""), width, MACCHIATO.mauve)
-      continue
-    }
-
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmedLine)) {
-      flushParagraph()
-      pushBlankRow()
-      rows.push({ color: MACCHIATO.surface2, text: "─".repeat(Math.max(1, width)) })
-      pushBlankRow()
-      continue
-    }
-
-    const quoteMatch = /^>\s?(.*)$/.exec(trimmedLine)
-    if (quoteMatch) {
-      flushParagraph()
-      pushWrappedRows(rows, `│ ${formatInlineMarkdownText(quoteMatch[1] ?? "")}`, width, MACCHIATO.subtext0)
-      continue
-    }
-
-    const unorderedListMatch = /^[-*+]\s+(.+)$/.exec(trimmedLine)
-    if (unorderedListMatch) {
-      flushParagraph()
-      pushListItem("-", unorderedListMatch[1] ?? "")
-      continue
-    }
-
-    const orderedListMatch = /^(\d+)\.\s+(.+)$/.exec(trimmedLine)
-    if (orderedListMatch) {
-      flushParagraph()
-      pushListItem(`${orderedListMatch[1]}.`, orderedListMatch[2] ?? "")
-      continue
-    }
-
-    paragraphLines.push(trimmedLine)
+    segments.push({ content: source.slice(openTag.index, closeTag.end), kind: "details" })
+    cursor = closeTag.end
   }
 
-  flushParagraph()
+  if (cursor < source.length) {
+    segments.push({ content: source.slice(cursor), kind: "text" })
+  }
+
+  return segments.length > 0 ? segments : [{ content: source, kind: "text" }]
+}
+
+function collectMarkdownDetailsTags(source: string): DetailsTag[] {
+  const tags: DetailsTag[] = []
+  let offset = 0
+  let fence: { character: "`" | "~"; length: number } | undefined
+
+  for (const line of source.split("\n")) {
+    const fenceMatch = /^(?: {0,3})(`{3,}|~{3,})/.exec(line)
+    if (fenceMatch) {
+      const marker = fenceMatch[1] ?? ""
+      const character = marker[0] as "`" | "~"
+      if (!fence) {
+        fence = { character, length: marker.length }
+      } else if (fence.character === character && marker.length >= fence.length) {
+        fence = undefined
+      }
+
+      offset += line.length + 1
+      continue
+    }
+
+    if (!fence) {
+      const detailsMatch = /^[ \t]{0,3}(<\/?details\b[^>]*>)/i.exec(line)
+      if (detailsMatch) {
+        const raw = detailsMatch[1] ?? ""
+        const index = offset + detailsMatch[0].length - raw.length
+        tags.push({
+          end: index + raw.length,
+          index,
+          kind: /^<\//.test(raw) ? "close" : "open",
+        })
+      }
+    }
+
+    offset += line.length + 1
+  }
+
+  return tags
+}
+
+function pushMarkdownAndMermaidBlocks(blocks: MarkdownRenderBlock[], source: string) {
+  if (!source.trim()) {
+    return
+  }
+
+  const tokens = Lexer.lex(source, { gfm: true })
+  let markdown = ""
+
+  for (const token of tokens) {
+    if (isMermaidCodeToken(token)) {
+      pushMarkdownBlock(blocks, markdown)
+      markdown = ""
+      blocks.push({ content: token.text, kind: "mermaid" })
+      continue
+    }
+
+    if (isBlockquoteToken(token)) {
+      pushMarkdownBlock(blocks, markdown)
+      markdown = ""
+      blocks.push(createBlockquoteMarkdownBlock(token.text))
+      continue
+    }
+
+    if (isListToken(token)) {
+      pushMarkdownBlock(blocks, markdown)
+      markdown = ""
+      blocks.push(createMarkdownListBlock(token))
+      continue
+    }
+
+    markdown += token.raw
+  }
+
+  pushMarkdownBlock(blocks, markdown)
+}
+
+function pushMarkdownBlock(blocks: MarkdownRenderBlock[], content: string) {
+  if (content.trim()) {
+    blocks.push({ content, kind: "markdown" })
+  }
+}
+
+function isMermaidCodeToken(token: Token): token is Token & { lang?: string; text: string; type: "code" } {
+  return token.type === "code" && token.lang?.trim().toLowerCase().split(/\s+/)[0] === "mermaid"
+}
+
+function isBlockquoteToken(token: Token): token is Token & { text: string; type: "blockquote" } {
+  return token.type === "blockquote" && typeof token.text === "string"
+}
+
+function isListToken(token: Token): token is Tokens.List {
+  return token.type === "list" && Array.isArray((token as Tokens.List).items)
+}
+
+function createMarkdownListBlock(token: Tokens.List): MarkdownListBlock {
+  return {
+    items: token.items.map(createMarkdownListItem),
+    kind: "list",
+    ordered: token.ordered,
+    start: typeof token.start === "number" ? token.start : 1,
+  }
+}
+
+function createMarkdownListItem(item: Tokens.ListItem): MarkdownListItem {
+  const contentTokens = item.tokens.filter((token) => token.type !== "checkbox" && token.type !== "list" && token.type !== "space")
+  const content = contentTokens.map((token) => token.raw).join("").trim()
+
+  return {
+    checked: item.checked,
+    children: item.tokens.filter(isListToken).map(createMarkdownListBlock),
+    content: content || createMarkdownListItemFallbackContent(item.text),
+    task: item.task,
+  }
+}
+
+function createMarkdownListItemFallbackContent(text: string) {
+  return text
+    .replace(/(?:^|\n)\s*(?:[-+*]|\d+[.)])\s+/g, "\n")
+    .trim()
+}
+
+function createBlockquoteMarkdownBlock(text: string): MarkdownRenderBlock {
+  const lines = text.replace(/\r\n/g, "\n").trim().split("\n")
+  const alertMatch = /^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i.exec(lines[0] ?? "")
+
+  if (alertMatch) {
+    return {
+      alertType: alertMatch[1]?.toLowerCase() as GithubAlertType,
+      content: lines.slice(1).join("\n").trim(),
+      kind: "github-alert",
+    }
+  }
+
+  return {
+    content: text.trim(),
+    kind: "quote",
+  }
+}
+
+function normalizeGithubMarkdown(value: string) {
+  const protectedBlocks: string[] = []
+  const protectedValue = value.replace(
+    /(^|\n)([ \t]{0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\2\3[ \t]*(?=\n|$)/g,
+    (match) => {
+      const placeholder = `\u0000GITTY_MARKDOWN_BLOCK_${protectedBlocks.length}\u0000`
+      protectedBlocks.push(match)
+      return placeholder
+    },
+  )
+
+  const normalized = normalizeGithubInlineHtml(protectedValue)
+  return protectedBlocks.reduce(
+    (current, block, index) => current.replace(`\u0000GITTY_MARKDOWN_BLOCK_${index}\u0000`, block),
+    normalized,
+  )
+}
+
+function normalizeGithubInlineHtml(value: string) {
+  return value
+    .replace(/<sub\b[^>]*>([\s\S]*?)<\/sub>/gi, (_match, content: string) => normalizeHtmlInlineText(content))
+    .replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (match: string, attributes: string, content: string) => {
+      const href = readHtmlAttribute(attributes, "href")
+      if (!href) {
+        return normalizeHtmlInlineText(content)
+      }
+
+      const label = normalizeHtmlInlineText(content) || href
+      return `[${escapeMarkdownLinkLabel(label)}](<${escapeMarkdownLinkHref(href)}>)`
+    })
+}
+
+function readHtmlAttribute(attributes: string, name: string) {
+  const pattern = new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i")
+  const match = pattern.exec(attributes)
+  return decodeHtmlEntities((match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim())
+}
+
+function escapeMarkdownLinkLabel(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
+}
+
+function escapeMarkdownLinkHref(value: string) {
+  return value.trim().replace(/>/g, "%3E")
+}
+
+function parseDetailsBlock(value: string): DetailsBlock {
+  const summaryMatch = /<summary\b[^>]*>([\s\S]*?)<\/summary>/i.exec(value)
+  const open = /^<details\b[^>]*\bopen(?:\s|=|>)/i.test(value.trim())
+  const body = value
+    .replace(/^[ \t]{0,3}<details\b[^>]*>/i, "")
+    .replace(/[ \t]*<\/details>\s*$/i, "")
+    .replace(/<summary\b[^>]*>[\s\S]*?<\/summary>/i, "")
+    .trim()
+
+  return {
+    body,
+    open,
+    summary: normalizeHtmlInlineText(normalizeGithubInlineHtml(summaryMatch?.[1] ?? "Details")),
+  }
+}
+
+function formatMermaidTitle(firstLine: string) {
+  const flowchartMatch = /^(graph|flowchart)\s+([a-z]+)/i.exec(firstLine.trim())
+  if (flowchartMatch) {
+    return `Mermaid ${flowchartMatch[1]?.toLowerCase()} ${flowchartMatch[2]?.toUpperCase()}`
+  }
+
+  const diagramMatch = /^([a-z]+Diagram)\b/i.exec(firstLine.trim())
+  if (diagramMatch) {
+    return `Mermaid ${splitCamelCase(diagramMatch[1] ?? "diagram")}`
+  }
+
+  return "Mermaid diagram"
+}
+
+function splitCamelCase(value: string) {
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()
+}
+
+function normalizeHtmlInlineText(value: string) {
+  return decodeHtmlEntities(
+    value
+      .replace(/<br\s*\/?>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+  )
+}
+
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;/gi, "'")
+}
+
+async function createMermaidRenderState(code: string, width: number): Promise<MermaidRenderState> {
+  const firstLine = getMermaidFirstLine(code)
+  try {
+    const svg = await renderMermaidSvg(code)
+    const rows = await renderMermaidSvgToTerminalRows(svg, width)
+    if (rows.length === 0) {
+      throw new Error("Mermaid returned an empty diagram.")
+    }
+
+    return { rows, status: "rendered" }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to render Mermaid diagram."
+    return {
+      message,
+      sourceRows: createMermaidSourceRows(code, firstLine, width, message),
+      status: "error",
+    }
+  }
+}
+
+function getMermaidFirstLine(code: string) {
+  return code
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .find((line) => line.trim() && !line.trim().startsWith("%%"))
+    ?.trim() ?? ""
+}
+
+async function renderMermaidSvg(code: string) {
+  const renderTask = mermaidRenderQueue.then(async () => {
+    const mermaid = await getMermaidRenderer()
+    const id = `gitty-mermaid-${hashString(code)}-${mermaidRenderCounter++}`
+    const { svg } = await mermaid.render(id, code)
+    if (!svg.trim()) {
+      throw new Error("Mermaid returned an empty SVG.")
+    }
+    return svg
+  })
+
+  mermaidRenderQueue = renderTask.then(
+    () => undefined,
+    () => undefined,
+  )
+
+  return renderTask
+}
+
+async function getMermaidRenderer() {
+  await ensureMermaidDom()
+  mermaidModulePromise ??= import("mermaid").then(({ default: mermaid }) => {
+    mermaid.initialize({
+      deterministicIds: true,
+      flowchart: { htmlLabels: false },
+      fontFamily: "monospace",
+      securityLevel: "strict",
+      startOnLoad: false,
+      theme: "base",
+      themeVariables: {
+        background: MERMAID_RENDER_BACKGROUND,
+        edgeLabelBackground: MACCHIATO.surface0,
+        fontFamily: "monospace",
+        lineColor: MACCHIATO.subtext0,
+        mainBkg: MACCHIATO.surface2,
+        nodeBorder: MACCHIATO.mauve,
+        primaryBorderColor: MACCHIATO.mauve,
+        primaryColor: MACCHIATO.surface0,
+        primaryTextColor: MACCHIATO.text,
+        secondaryColor: MACCHIATO.base,
+        tertiaryColor: MACCHIATO.mantle,
+      },
+    })
+    return mermaid
+  })
+
+  return mermaidModulePromise
+}
+
+async function ensureMermaidDom() {
+  if (mermaidDomReady) {
+    return
+  }
+
+  const { JSDOM } = await import("jsdom")
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true })
+  const window = dom.window as unknown as MermaidDomWindow
+  Object.assign(globalThis, {
+    CSSStyleSheet: window.CSSStyleSheet,
+    Element: window.Element,
+    HTMLElement: window.HTMLElement,
+    SVGElement: window.SVGElement,
+    document: window.document,
+    navigator: window.navigator,
+    window,
+  })
+  installMermaidSvgMeasurementPolyfill(window)
+  mermaidDomReady = true
+}
+
+function installMermaidSvgMeasurementPolyfill(window: MermaidDomWindow) {
+  const svgPrototype = window.SVGElement.prototype as SVGElement & {
+    getBBox?: () => SvgBox
+    getComputedTextLength?: () => number
+  }
+
+  svgPrototype.getBBox = function getBBox(this: SVGElement) {
+    return getSvgElementBox(this)
+  }
+  svgPrototype.getComputedTextLength = function getComputedTextLength(this: SVGElement) {
+    return measureSvgText(this).width
+  }
+}
+
+function getSvgElementBox(element: Element): SvgBox {
+  const tagName = element.tagName.toLowerCase()
+
+  if (tagName === "text" || tagName === "tspan") {
+    const size = measureSvgText(element)
+    return applySvgTranslate(element, createSvgBox(readSvgNumber(element, "x"), readSvgNumber(element, "y") - size.height, size.width, size.height))
+  }
+
+  if (tagName === "rect" || tagName === "image" || tagName === "foreignobject") {
+    const textSize = measureSvgText(element)
+    return applySvgTranslate(
+      element,
+      createSvgBox(
+        readSvgNumber(element, "x"),
+        readSvgNumber(element, "y"),
+        readSvgNumber(element, "width", textSize.width),
+        readSvgNumber(element, "height", textSize.height),
+      ),
+    )
+  }
+
+  if (tagName === "circle") {
+    const radius = readSvgNumber(element, "r")
+    return applySvgTranslate(
+      element,
+      createSvgBox(readSvgNumber(element, "cx") - radius, readSvgNumber(element, "cy") - radius, radius * 2, radius * 2),
+    )
+  }
+
+  if (tagName === "ellipse") {
+    const radiusX = readSvgNumber(element, "rx")
+    const radiusY = readSvgNumber(element, "ry")
+    return applySvgTranslate(
+      element,
+      createSvgBox(readSvgNumber(element, "cx") - radiusX, readSvgNumber(element, "cy") - radiusY, radiusX * 2, radiusY * 2),
+    )
+  }
+
+  if (tagName === "line") {
+    const x1 = readSvgNumber(element, "x1")
+    const y1 = readSvgNumber(element, "y1")
+    const x2 = readSvgNumber(element, "x2")
+    const y2 = readSvgNumber(element, "y2")
+    return applySvgTranslate(element, createSvgBox(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)))
+  }
+
+  if (tagName === "polygon" || tagName === "polyline") {
+    return applySvgTranslate(element, getSvgPointsBox(element.getAttribute("points") ?? ""))
+  }
+
+  return applySvgTranslate(element, mergeSvgBoxes(Array.from(element.children).map((child) => getSvgElementBox(child))))
+}
+
+function measureSvgText(element: Element) {
+  const text = (element.textContent ?? "").replace(/\s+/g, " ").trim()
+  const fontSize = readSvgNumber(element, "font-size", 16)
+  const lines = text.split("\n").filter(Boolean)
+  const longestLineLength = Math.max(1, ...lines.map((line) => line.length))
+
+  return {
+    height: Math.max(16, Math.max(1, lines.length) * fontSize * 1.2),
+    width: Math.max(16, longestLineLength * fontSize * 0.58),
+  }
+}
+
+function getSvgPointsBox(points: string) {
+  const values = [...points.matchAll(/(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)/g)].map((match) => ({
+    x: Number.parseFloat(match[1] ?? "0"),
+    y: Number.parseFloat(match[2] ?? "0"),
+  }))
+
+  if (values.length === 0) {
+    return createSvgBox()
+  }
+
+  const left = Math.min(...values.map((point) => point.x))
+  const right = Math.max(...values.map((point) => point.x))
+  const top = Math.min(...values.map((point) => point.y))
+  const bottom = Math.max(...values.map((point) => point.y))
+  return createSvgBox(left, top, right - left, bottom - top)
+}
+
+function applySvgTranslate(element: Element, box: SvgBox) {
+  const translateMatch = /translate\(\s*(-?\d+(?:\.\d+)?)(?:[ ,]+(-?\d+(?:\.\d+)?))?\s*\)/.exec(
+    element.getAttribute("transform") ?? "",
+  )
+  if (!translateMatch) {
+    return box
+  }
+
+  const x = Number.parseFloat(translateMatch[1] ?? "0")
+  const y = Number.parseFloat(translateMatch[2] ?? "0")
+  return createSvgBox(box.x + x, box.y + y, box.width, box.height)
+}
+
+function mergeSvgBoxes(boxes: SvgBox[]) {
+  const visibleBoxes = boxes.filter((box) => box.width > 0 || box.height > 0)
+  if (visibleBoxes.length === 0) {
+    return createSvgBox()
+  }
+
+  const left = Math.min(...visibleBoxes.map((box) => box.x))
+  const right = Math.max(...visibleBoxes.map((box) => box.x + box.width))
+  const top = Math.min(...visibleBoxes.map((box) => box.y))
+  const bottom = Math.max(...visibleBoxes.map((box) => box.y + box.height))
+  return createSvgBox(left, top, right - left, bottom - top)
+}
+
+function createSvgBox(x = 0, y = 0, width = 0, height = 0): SvgBox {
+  return {
+    bottom: y + height,
+    height,
+    left: x,
+    right: x + width,
+    top: y,
+    width,
+    x,
+    y,
+  }
+}
+
+function readSvgNumber(element: Element, name: string, fallback = 0) {
+  const value = Number.parseFloat(element.getAttribute(name) ?? "")
+  return Number.isFinite(value) ? value : fallback
+}
+
+async function renderMermaidSvgToTerminalRows(svg: string, width: number) {
+  const sharp = (await import("sharp")).default
+  const targetWidth = Math.max(MERMAID_MIN_TERMINAL_WIDTH, Math.min(width, MERMAID_MAX_TERMINAL_WIDTH))
+  const maxPixelHeight = MERMAID_MAX_TERMINAL_ROWS * 2
+  const { data, info } = await sharp(Buffer.from(svg))
+    .resize({
+      fit: "inside",
+      height: maxPixelHeight,
+      width: targetWidth,
+      withoutEnlargement: false,
+    })
+    .flatten({ background: MERMAID_RENDER_BACKGROUND })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true })
+
+  return createTerminalImageRows(data, info.width, info.height, info.channels, width)
+}
+
+function createTerminalImageRows(data: Buffer, imageWidth: number, imageHeight: number, channels: number, renderWidth: number) {
+  const rows: TerminalImageRow[] = []
+  const leftPadding = Math.max(0, Math.floor((renderWidth - imageWidth) / 2))
+  const rightPadding = Math.max(0, renderWidth - imageWidth - leftPadding)
+
+  for (let y = 0; y < imageHeight; y += 2) {
+    const runs: TerminalImageRun[] = []
+    pushTerminalImageRun(runs, MERMAID_RENDER_BACKGROUND, MERMAID_RENDER_BACKGROUND, " ".repeat(leftPadding))
+
+    for (let x = 0; x < imageWidth; x += 1) {
+      const topColor = readTerminalPixelColor(data, imageWidth, imageHeight, channels, x, y)
+      const bottomColor =
+        y + 1 < imageHeight ? readTerminalPixelColor(data, imageWidth, imageHeight, channels, x, y + 1) : MERMAID_RENDER_BACKGROUND
+      const glyph = topColor === MERMAID_RENDER_BACKGROUND && bottomColor === MERMAID_RENDER_BACKGROUND ? " " : "▀"
+      pushTerminalImageRun(runs, topColor, bottomColor, glyph)
+    }
+
+    pushTerminalImageRun(runs, MERMAID_RENDER_BACKGROUND, MERMAID_RENDER_BACKGROUND, " ".repeat(rightPadding))
+    rows.push({ runs })
+  }
+
   return rows
 }
 
-function formatInlineMarkdownText(value: string) {
-  return value
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/!\[([^\]]*)]\([^)]*\)/g, (_match, alt: string) => `[image${alt ? `: ${alt}` : ""}]`)
-    .replace(/\[([^\]]+)]\(([^)]+)\)/g, (_match, label: string, url: string) => `${label} (${url})`)
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/_([^_]+)_/g, "$1")
-    .replace(/~~([^~]+)~~/g, "$1")
+function pushTerminalImageRun(runs: TerminalImageRun[], color: string, backgroundColor: string, text: string) {
+  if (!text) {
+    return
+  }
+
+  const previous = runs.at(-1)
+  if (previous && previous.color === color && previous.backgroundColor === backgroundColor) {
+    previous.text += text
+    return
+  }
+
+  runs.push({ backgroundColor, color, text })
+}
+
+function readTerminalPixelColor(data: Buffer, imageWidth: number, imageHeight: number, channels: number, x: number, y: number) {
+  if (x < 0 || y < 0 || x >= imageWidth || y >= imageHeight) {
+    return MERMAID_RENDER_BACKGROUND
+  }
+
+  const offset = (y * imageWidth + x) * channels
+  const alpha = channels > 3 ? (data[offset + 3] ?? 255) / 255 : 1
+  const background = hexToRgb(MERMAID_RENDER_BACKGROUND)
+  const color = {
+    b: blendChannel(data[offset + 2] ?? background.b, background.b, alpha),
+    g: blendChannel(data[offset + 1] ?? background.g, background.g, alpha),
+    r: blendChannel(data[offset] ?? background.r, background.r, alpha),
+  }
+
+  return findNearestMermaidColor(color)
+}
+
+function blendChannel(value: number, background: number, alpha: number) {
+  return Math.round(value * alpha + background * (1 - alpha))
+}
+
+function findNearestMermaidColor(color: RgbColor) {
+  const cacheKey = `${color.r},${color.g},${color.b}`
+  const cached = nearestMermaidColorCache.get(cacheKey)
+  if (cached) {
+    return cached
+  }
+
+  let nearest: string = MERMAID_RENDER_BACKGROUND
+  let nearestDistance = Number.POSITIVE_INFINITY
+  for (const entry of mermaidPaletteRgb) {
+    const distance = (color.r - entry.rgb.r) ** 2 + (color.g - entry.rgb.g) ** 2 + (color.b - entry.rgb.b) ** 2
+    if (distance < nearestDistance) {
+      nearest = entry.color
+      nearestDistance = distance
+    }
+  }
+
+  nearestMermaidColorCache.set(cacheKey, nearest)
+  return nearest
+}
+
+function hexToRgb(color: string): RgbColor {
+  const normalized = color.replace(/^#/, "")
+  return {
+    b: Number.parseInt(normalized.slice(4, 6), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+  }
+}
+
+function createMermaidSourceRows(code: string, firstLine: string, width: number, message: string): TextRow[] {
+  const rows: TextRow[] = [
+    { backgroundColor: MERMAID_RENDER_BACKGROUND, color: MACCHIATO.mauve, text: formatMermaidTitle(firstLine) },
+    {
+      backgroundColor: MERMAID_RENDER_BACKGROUND,
+      color: MACCHIATO.yellow,
+      text: message,
+    },
+  ]
+
+  for (const line of code.replace(/\r\n/g, "\n").split("\n")) {
+    pushWrappedRows(rows, line || " ", width, MACCHIATO.text, MERMAID_RENDER_BACKGROUND)
+  }
+
+  return rows
+}
+
+function hashString(value: string) {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return (hash >>> 0).toString(36)
 }
 
 function formatTimelineTimestamp(value: string) {
@@ -1724,15 +2625,22 @@ function StatusOverlay({
 
 function PullRequestPane({
   detailState,
+  diffState,
   onOpenUrl,
+  pullRequestNumber,
   summary,
+  theme,
   width,
 }: {
   detailState?: PullRequestDetailState
+  diffState?: PullRequestDiffState
   onOpenUrl: (url: string) => void
+  pullRequestNumber: number
   summary?: PullRequestSummary
+  theme: HunkDiffThemeName
   width: number
 }) {
+  const [activeTab, setActiveTab] = useState<PullRequestTab>("discussion")
   const sidebarWidth =
     width >= PR_DETAIL_SIDEBAR_MIN_WIDTH + 24
       ? Math.min(PR_DETAIL_SIDEBAR_MAX_WIDTH, Math.max(PR_DETAIL_SIDEBAR_MIN_WIDTH, Math.floor(width * PR_DETAIL_SIDEBAR_RATIO)))
@@ -1740,9 +2648,22 @@ function PullRequestPane({
   const contentWidth = Math.max(1, width - sidebarWidth - (sidebarWidth > 0 ? 1 : 0))
   const detail = detailState?.status === "loaded" ? detailState.detail : undefined
 
+  useEffect(() => {
+    setActiveTab("discussion")
+  }, [pullRequestNumber])
+
   return (
     <box style={{ width, height: "100%", flexDirection: "row" }}>
-      <PullRequestContentPane detailState={detailState} onOpenUrl={onOpenUrl} summary={summary} width={contentWidth} />
+      <PullRequestContentPane
+        activeTab={activeTab}
+        detailState={detailState}
+        diffState={diffState}
+        onOpenUrl={onOpenUrl}
+        onSelectTab={setActiveTab}
+        summary={summary}
+        theme={theme}
+        width={contentWidth}
+      />
       {sidebarWidth > 0 ? (
         <>
           <box style={{ width: 1, height: "100%" }} />
@@ -1754,14 +2675,22 @@ function PullRequestPane({
 }
 
 function PullRequestContentPane({
+  activeTab,
   detailState,
+  diffState,
   onOpenUrl,
+  onSelectTab,
   summary,
+  theme,
   width,
 }: {
+  activeTab: PullRequestTab
   detailState?: PullRequestDetailState
+  diffState?: PullRequestDiffState
   onOpenUrl: (url: string) => void
+  onSelectTab: (tab: PullRequestTab) => void
   summary?: PullRequestSummary
+  theme: HunkDiffThemeName
   width: number
 }) {
   const contentWidth = Math.max(1, width - 4)
@@ -1807,7 +2736,6 @@ function PullRequestContentPane({
   }
 
   const detail = detailState.detail
-  const descriptionRows = createMarkdownRows(detail.body, Math.max(1, contentWidth - 4))
 
   return (
     <box
@@ -1819,16 +2747,127 @@ function PullRequestContentPane({
         borderStyle: "rounded",
         borderColor: MACCHIATO.surface2,
         backgroundColor: MACCHIATO.mantle,
+        flexDirection: "column",
         paddingLeft: 1,
         paddingRight: 1,
       }}
     >
-      <scrollbox style={{ width: "100%", height: "100%" }} scrollY>
-        <PullRequestTitleBlock detail={detail} onOpenUrl={onOpenUrl} width={contentWidth} />
-        <DescriptionMarkdownBlock rows={descriptionRows} width={contentWidth} />
-        <CommentChain comments={detail.comments} width={contentWidth} />
-      </scrollbox>
+      <PullRequestTabBar activeTab={activeTab} onSelectTab={onSelectTab} width={contentWidth} />
+      {activeTab === "discussion" ? (
+        <scrollbox style={{ width: "100%", flexGrow: 1 }} scrollY>
+          <PullRequestTitleBlock detail={detail} onOpenUrl={onOpenUrl} width={contentWidth} />
+          <DescriptionMarkdownBlock markdown={detail.body} width={contentWidth} />
+          <CommentChain comments={detail.comments} width={contentWidth} />
+        </scrollbox>
+      ) : (
+        <PullRequestDiffContent diffState={diffState} theme={theme} width={contentWidth} />
+      )}
     </box>
+  )
+}
+
+function PullRequestTabBar({
+  activeTab,
+  onSelectTab,
+  width,
+}: {
+  activeTab: PullRequestTab
+  onSelectTab: (tab: PullRequestTab) => void
+  width: number
+}) {
+  const tabs: { label: string; value: PullRequestTab }[] = [
+    { label: "Discussion", value: "discussion" },
+    { label: "Diff", value: "diff" },
+  ]
+  const tabWidth = Math.max(10, Math.min(16, Math.floor(width / tabs.length)))
+
+  return (
+    <box style={{ width: "100%", height: 2, flexDirection: "column", backgroundColor: MACCHIATO.mantle }}>
+      <box style={{ width: "100%", height: 1, flexDirection: "row", backgroundColor: MACCHIATO.mantle }}>
+        {tabs.map((tab) => {
+          const selected = activeTab === tab.value
+          const selectTab = (event: MouseEvent) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onSelectTab(tab.value)
+          }
+
+          return (
+            <box
+              key={tab.value}
+              style={{
+                width: tabWidth,
+                height: 1,
+                backgroundColor: selected ? MACCHIATO.surface0 : MACCHIATO.mantle,
+              }}
+              onMouseUp={selectTab}
+            >
+              <text fg={selected ? MACCHIATO.mauve : MACCHIATO.text}>
+                {fitText(`${selected ? ">" : " "} ${tab.label}`, tabWidth)}
+              </text>
+            </box>
+          )
+        })}
+      </box>
+      <box style={{ width: "100%", height: 1 }} />
+    </box>
+  )
+}
+
+function PullRequestDiffContent({
+  diffState,
+  theme,
+  width,
+}: {
+  diffState?: PullRequestDiffState
+  theme: HunkDiffThemeName
+  width: number
+}) {
+  const files = diffState?.status === "loaded" ? diffState.files : EMPTY_DIFF_FILES
+  const [selection, setSelection] = useState<HunkDiffSelection>(() => defaultSelection(files))
+  const normalizedSelection = normalizeSelection(files, selection)
+
+  useEffect(() => {
+    setSelection((currentSelection) => normalizeSelection(files, currentSelection))
+  }, [files])
+
+  if (!diffState || diffState.status === "loading") {
+    return (
+      <box style={{ width: "100%", height: 3, paddingLeft: 1, paddingTop: 1 }}>
+        <text fg={MACCHIATO.subtext0}>{fitText("Loading pull request diff...", Math.max(1, width - 2))}</text>
+      </box>
+    )
+  }
+
+  if (diffState.status === "unavailable") {
+    return (
+      <box style={{ width: "100%", height: 3, paddingLeft: 1, paddingTop: 1 }}>
+        <text fg={MACCHIATO.red}>{fitText(diffState.message, Math.max(1, width - 2))}</text>
+      </box>
+    )
+  }
+
+  if (files.length === 0) {
+    return (
+      <box style={{ width: "100%", height: 3, paddingLeft: 1, paddingTop: 1 }}>
+        <text fg={MACCHIATO.subtext0}>{fitText("No diff files in this pull request.", Math.max(1, width - 2))}</text>
+      </box>
+    )
+  }
+
+  return (
+    <scrollbox style={{ width: "100%", flexGrow: 1 }} scrollY>
+      <HunkReviewStream
+        files={files}
+        highlight
+        layout="split"
+        width={width}
+        theme={theme}
+        selection={normalizedSelection}
+        wrapLines
+        onSelectionChange={setSelection}
+      />
+    </scrollbox>
   )
 }
 
@@ -1877,10 +2916,10 @@ function PullRequestTitleBlock({
 }
 
 function DescriptionMarkdownBlock({
-  rows,
+  markdown,
   width,
 }: {
-  rows: TextRow[]
+  markdown: string
   width: number
 }) {
   const contentWidth = Math.max(1, width - 4)
@@ -1890,7 +2929,6 @@ function DescriptionMarkdownBlock({
       title="Description"
       style={{
         width: "100%",
-        height: rows.length + 2,
         border: true,
         borderStyle: "rounded",
         borderColor: MACCHIATO.surface2,
@@ -1900,7 +2938,12 @@ function DescriptionMarkdownBlock({
         paddingRight: 1,
       }}
     >
-      <TextRows rowKeyPrefix="pull-request-description-row" rows={rows} width={contentWidth} />
+      <MarkdownContent
+        blockKeyPrefix="pull-request-description"
+        emptyText="No description."
+        markdown={markdown}
+        width={contentWidth}
+      />
     </box>
   )
 }
@@ -1912,6 +2955,7 @@ function CommentChain({
   comments: PullRequestTimelineItem[]
   width: number
 }) {
+  const changesRequestedComments = comments.filter(isChangesRequestedTimelineItem)
   const commentBlockWidth = Math.max(1, Math.floor(width * 0.9))
   const leftGutterWidth = Math.max(0, width - commentBlockWidth)
 
@@ -1921,23 +2965,27 @@ function CommentChain({
       <box style={{ width: "100%", height: 1 }}>
         <text fg={MACCHIATO.mauve}>{fitText("Comment chain", width)}</text>
       </box>
-      {comments.length === 0 ? (
+      {changesRequestedComments.length === 0 ? (
         <box style={{ width: "100%", height: 1 }}>
-          <text fg={MACCHIATO.subtext0}>{fitText("No comments yet.", width)}</text>
+          <text fg={MACCHIATO.subtext0}>{fitText("No changes requested comments.", width)}</text>
         </box>
       ) : (
-        comments.map((comment, index) => (
+        changesRequestedComments.map((comment, index) => (
           <box
             key={`pull-request-comment-row:${index}`}
-            style={{ width: "100%", height: createCommentBlockHeight(comment, commentBlockWidth), flexDirection: "row" }}
+            style={{ width: "100%", flexDirection: "row", marginBottom: 1 }}
           >
-            {leftGutterWidth > 0 ? <box style={{ width: leftGutterWidth, height: "100%" }} /> : null}
+            {leftGutterWidth > 0 ? <box style={{ width: leftGutterWidth }} /> : null}
             <CommentBlock comment={comment} width={commentBlockWidth} />
           </box>
         ))
       )}
     </box>
   )
+}
+
+function isChangesRequestedTimelineItem(comment: PullRequestTimelineItem) {
+  return comment.kind === "review" && normalizeGitHubState(comment.state) === "CHANGES_REQUESTED"
 }
 
 function CommentBlock({
@@ -1948,13 +2996,11 @@ function CommentBlock({
   width: number
 }) {
   const contentWidth = Math.max(1, width - 4)
-  const rows = createCommentBodyRows(comment, contentWidth)
 
   return (
     <box
       style={{
         width,
-        height: rows.length + 3,
         border: true,
         borderStyle: "rounded",
         borderColor: MACCHIATO.surface2,
@@ -1967,8 +3013,454 @@ function CommentBlock({
       <box style={{ width: "100%", height: 1 }}>
         <text fg={MACCHIATO.lavender}>{fitText(formatCommentHeading(comment), contentWidth)}</text>
       </box>
-      <TextRows rowKeyPrefix={`pull-request-comment:${comment.author}:${comment.createdAt}`} rows={rows} width={contentWidth} />
+      <MarkdownContent
+        blockKeyPrefix={`pull-request-comment:${comment.author}:${comment.createdAt}`}
+        emptyText="No content."
+        markdown={comment.body}
+        width={contentWidth}
+      />
     </box>
+  )
+}
+
+function MarkdownContent({
+  backgroundColor = MACCHIATO.base,
+  blockKeyPrefix,
+  emptyText,
+  markdown,
+  width,
+}: {
+  backgroundColor?: string
+  blockKeyPrefix: string
+  emptyText: string
+  markdown: string
+  width: number
+}) {
+  const blocks = useMemo(() => createMarkdownBlocks(markdown, emptyText), [emptyText, markdown])
+
+  return (
+    <box style={{ width: "100%", flexDirection: "column", backgroundColor }}>
+      {blocks.map((block, index) => {
+        const key = `${blockKeyPrefix}:${index}`
+        if (block.kind === "details") {
+          return <DetailsMarkdownBlock block={block} blockKeyPrefix={key} key={key} width={width} />
+        }
+
+        if (block.kind === "github-alert") {
+          return <GithubAlertMarkdownBlock block={block} blockKeyPrefix={key} key={key} width={width} />
+        }
+
+        if (block.kind === "mermaid") {
+          return <MermaidDiagram content={block.content} key={key} width={width} />
+        }
+
+        if (block.kind === "list") {
+          return (
+            <MarkdownListBlockView
+              backgroundColor={backgroundColor}
+              block={block}
+              blockKeyPrefix={key}
+              key={key}
+              width={width}
+            />
+          )
+        }
+
+        if (block.kind === "quote") {
+          return <QuoteMarkdownBlock block={block} blockKeyPrefix={key} key={key} width={width} />
+        }
+
+        return (
+          <markdown
+            bg={backgroundColor}
+            conceal
+            content={block.content}
+            fg={MACCHIATO.text}
+            internalBlockMode="top-level"
+            key={key}
+            syntaxStyle={MARKDOWN_SYNTAX_STYLE}
+            tableOptions={MARKDOWN_TABLE_OPTIONS}
+            style={{
+              width: "100%",
+              flexShrink: 0,
+              marginBottom: index === blocks.length - 1 ? 0 : 1,
+            }}
+          />
+        )
+      })}
+    </box>
+  )
+}
+
+function MarkdownListBlockView({
+  backgroundColor,
+  block,
+  blockKeyPrefix,
+  depth = 0,
+  width,
+}: {
+  backgroundColor: string
+  block: MarkdownListBlock
+  blockKeyPrefix: string
+  depth?: number
+  width: number
+}) {
+  const markerWidth = getMarkdownListMarkerWidth(block)
+
+  return (
+    <box
+      style={{
+        width: "100%",
+        backgroundColor,
+        flexDirection: "column",
+        flexShrink: 0,
+        marginBottom: depth === 0 ? 1 : 0,
+      }}
+    >
+      {block.items.map((item, index) => {
+        const marker = createMarkdownListMarker(block, item, index)
+        return (
+          <MarkdownListItemView
+            backgroundColor={backgroundColor}
+            blockKeyPrefix={`${blockKeyPrefix}:${index}`}
+            depth={depth}
+            item={item}
+            key={`${blockKeyPrefix}:${index}`}
+            marker={marker}
+            markerWidth={markerWidth}
+            width={width}
+          />
+        )
+      })}
+    </box>
+  )
+}
+
+function MarkdownListItemView({
+  backgroundColor,
+  blockKeyPrefix,
+  depth,
+  item,
+  marker,
+  markerWidth,
+  width,
+}: {
+  backgroundColor: string
+  blockKeyPrefix: string
+  depth: number
+  item: MarkdownListItem
+  marker: string
+  markerWidth: number
+  width: number
+}) {
+  const indentWidth = depth * MARKDOWN_LIST_INDENT_WIDTH
+  const markerColumnWidth = Math.min(Math.max(1, indentWidth + markerWidth + 1), Math.max(1, width - 1))
+  const contentWidth = Math.max(1, width - markerColumnWidth)
+  const markerText = `${" ".repeat(indentWidth)}${marker.padStart(markerWidth)} `
+
+  return (
+    <box
+      style={{
+        width: "100%",
+        backgroundColor,
+        flexDirection: "row",
+        flexShrink: 0,
+      }}
+    >
+      <text
+        fg={getMarkdownListMarkerColor(item)}
+        bg={backgroundColor}
+        style={{ width: markerColumnWidth, height: 1, flexShrink: 0 }}
+      >
+        {fitText(markerText, markerColumnWidth)}
+      </text>
+      <box
+        style={{
+          width: contentWidth,
+          backgroundColor,
+          flexDirection: "column",
+          flexShrink: 0,
+        }}
+      >
+        {item.content ? (
+          <markdown
+            bg={backgroundColor}
+            conceal
+            content={item.content}
+            fg={MACCHIATO.text}
+            internalBlockMode="coalesced"
+            syntaxStyle={MARKDOWN_SYNTAX_STYLE}
+            tableOptions={MARKDOWN_TABLE_OPTIONS}
+            style={{
+              width: "100%",
+              flexShrink: 0,
+            }}
+          />
+        ) : (
+          <text bg={backgroundColor} style={{ width: "100%", height: 1, flexShrink: 0 }}>
+            {" "}
+          </text>
+        )}
+        {item.children.map((child, index) => (
+          <MarkdownListBlockView
+            backgroundColor={backgroundColor}
+            block={child}
+            blockKeyPrefix={`${blockKeyPrefix}:child:${index}`}
+            depth={depth + 1}
+            key={`${blockKeyPrefix}:child:${index}`}
+            width={contentWidth}
+          />
+        ))}
+      </box>
+    </box>
+  )
+}
+
+function getMarkdownListMarkerWidth(block: MarkdownListBlock) {
+  if (!block.ordered) {
+    return block.items.some((item) => item.task) ? 3 : 1
+  }
+
+  const lastNumber = block.start + Math.max(0, block.items.length - 1)
+  return `${lastNumber}.`.length
+}
+
+function createMarkdownListMarker(block: MarkdownListBlock, item: MarkdownListItem, index: number) {
+  if (item.task) {
+    return item.checked ? "[x]" : "[ ]"
+  }
+
+  return block.ordered ? `${block.start + index}.` : "-"
+}
+
+function getMarkdownListMarkerColor(item: MarkdownListItem) {
+  if (!item.task) {
+    return MACCHIATO.subtext0
+  }
+
+  return item.checked ? MACCHIATO.green : MACCHIATO.yellow
+}
+
+function GithubAlertMarkdownBlock({
+  block,
+  blockKeyPrefix,
+  width,
+}: {
+  block: Extract<MarkdownRenderBlock, { kind: "github-alert" }>
+  blockKeyPrefix: string
+  width: number
+}) {
+  const alert = GITHUB_ALERTS[block.alertType]
+  const contentWidth = Math.max(1, width - 4)
+
+  return (
+    <box
+      title={alert.title}
+      style={{
+        width: "100%",
+        border: true,
+        borderStyle: "rounded",
+        borderColor: alert.color,
+        backgroundColor: MACCHIATO.surface0,
+        flexDirection: "column",
+        marginBottom: 1,
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <MarkdownContent
+        backgroundColor={MACCHIATO.surface0}
+        blockKeyPrefix={`${blockKeyPrefix}:body`}
+        emptyText="No alert content."
+        markdown={block.content}
+        width={contentWidth}
+      />
+    </box>
+  )
+}
+
+function QuoteMarkdownBlock({
+  block,
+  blockKeyPrefix,
+  width,
+}: {
+  block: Extract<MarkdownRenderBlock, { kind: "quote" }>
+  blockKeyPrefix: string
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+
+  return (
+    <box
+      title="Quote"
+      style={{
+        width: "100%",
+        border: true,
+        borderStyle: "rounded",
+        borderColor: MACCHIATO.surface2,
+        backgroundColor: MACCHIATO.surface0,
+        flexDirection: "column",
+        marginBottom: 1,
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <MarkdownContent
+        backgroundColor={MACCHIATO.surface0}
+        blockKeyPrefix={`${blockKeyPrefix}:body`}
+        emptyText="No quote content."
+        markdown={block.content}
+        width={contentWidth}
+      />
+    </box>
+  )
+}
+
+function DetailsMarkdownBlock({
+  block,
+  blockKeyPrefix,
+  width,
+}: {
+  block: Extract<MarkdownRenderBlock, { kind: "details" }>
+  blockKeyPrefix: string
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+  const [isOpen, setOpen] = useState(block.open)
+
+  useEffect(() => {
+    setOpen(block.open)
+  }, [block.body, block.open, block.summary])
+
+  return (
+    <box
+      title="Details"
+      style={{
+        width: "100%",
+        border: true,
+        borderStyle: "rounded",
+        borderColor: MACCHIATO.surface2,
+        backgroundColor: MACCHIATO.surface0,
+        flexDirection: "column",
+        marginBottom: 1,
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <box
+        style={{ width: "100%", height: 1, backgroundColor: MACCHIATO.surface0 }}
+        onMouseUp={() => setOpen((current) => !current)}
+      >
+        <text fg={MACCHIATO.mauve}>{fitText(`${isOpen ? "v" : ">"} ${block.summary}`, contentWidth)}</text>
+      </box>
+      {isOpen ? (
+        <MarkdownContent
+          backgroundColor={MACCHIATO.surface0}
+          blockKeyPrefix={`${blockKeyPrefix}:body`}
+          emptyText="No details."
+          markdown={block.body}
+          width={contentWidth}
+        />
+      ) : null}
+    </box>
+  )
+}
+
+function MermaidDiagram({
+  content,
+  width,
+}: {
+  content: string
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+  const [renderState, setRenderState] = useState<MermaidRenderState>({ status: "loading" })
+
+  useEffect(() => {
+    let isCancelled = false
+    setRenderState({ status: "loading" })
+
+    void createMermaidRenderState(content, contentWidth).then((nextState) => {
+      if (!isCancelled) {
+        setRenderState(nextState)
+      }
+    })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [content, contentWidth])
+
+  const height =
+    renderState.status === "rendered"
+      ? renderState.rows.length + 2
+      : renderState.status === "error"
+        ? Math.min(renderState.sourceRows.length + 2, MERMAID_MAX_TERMINAL_ROWS + 6)
+        : 4
+  const borderColor = renderState.status === "error" ? MACCHIATO.yellow : MACCHIATO.surface2
+
+  return (
+    <box
+      title="Mermaid"
+      style={{
+        width: "100%",
+        height,
+        border: true,
+        borderStyle: "rounded",
+        borderColor,
+        backgroundColor: MERMAID_RENDER_BACKGROUND,
+        flexDirection: "column",
+        marginBottom: 1,
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      {renderState.status === "loading" ? (
+        <text fg={MACCHIATO.subtext0} bg={MERMAID_RENDER_BACKGROUND} style={{ width: contentWidth, height: 1 }}>
+          Rendering Mermaid diagram...
+        </text>
+      ) : null}
+      {renderState.status === "rendered" ? (
+        <TerminalImageRows rowKeyPrefix="pull-request-mermaid-row" rows={renderState.rows} width={contentWidth} />
+      ) : null}
+      {renderState.status === "error" ? (
+        <>
+          <TextRows rowKeyPrefix="pull-request-mermaid-source-row" rows={renderState.sourceRows} width={contentWidth} />
+        </>
+      ) : null}
+    </box>
+  )
+}
+
+function TerminalImageRows({
+  rowKeyPrefix,
+  rows,
+  width,
+}: {
+  rowKeyPrefix: string
+  rows: TerminalImageRow[]
+  width: number
+}) {
+  return (
+    <>
+      {rows.map((row, index) => (
+        <text
+          bg={MERMAID_RENDER_BACKGROUND}
+          key={`${rowKeyPrefix}:${index}`}
+          style={{ width, height: 1, flexShrink: 0 }}
+        >
+          {row.runs.map((run, runIndex) => (
+            <span
+              bg={run.backgroundColor}
+              fg={run.color}
+              key={`${rowKeyPrefix}:${index}:${runIndex}`}
+            >
+              {run.text}
+            </span>
+          ))}
+        </text>
+      ))}
+    </>
   )
 }
 
@@ -2041,14 +3533,6 @@ function PullRequestMetadataSidebar({
       </scrollbox>
     </box>
   )
-}
-
-function createCommentBlockHeight(comment: PullRequestTimelineItem, width: number) {
-  return createCommentBodyRows(comment, Math.max(1, width - 4)).length + 3
-}
-
-function createCommentBodyRows(comment: PullRequestTimelineItem, width: number): TextRow[] {
-  return createMarkdownRows(comment.body, width, "No content.")
 }
 
 function formatCommentHeading(comment: PullRequestTimelineItem) {
@@ -2217,6 +3701,8 @@ function DiffApp({
       : undefined
   const activePullRequestDetailState =
     activePane.kind === "pull-request" ? activeRepository?.pullRequestDetails?.[activePane.pullRequestNumber] : undefined
+  const activePullRequestDiffState =
+    activePane.kind === "pull-request" ? activeRepository?.pullRequestDiffs?.[activePane.pullRequestNumber] : undefined
   const files = activeRepository?.files ?? []
   const selection = normalizeSelection(files, activeRepository ? selections[activeRepository.id] : undefined)
   const shellWidth = Math.max(1, terminal.width - 2)
@@ -2289,6 +3775,46 @@ function DiffApp({
   }, [activePane, activeRepository, activePullRequestDetailState])
 
   useEffect(() => {
+    if (activePane.kind !== "pull-request" || !activeRepository || activePullRequestDiffState) {
+      return
+    }
+
+    const repositoryId = activeRepository.id
+    const repositoryPath = activeRepository.path
+    const pullRequestNumber = activePane.pullRequestNumber
+
+    setRepositories((currentRepositories) =>
+      currentRepositories.map((currentRepository) =>
+        currentRepository.id === repositoryId
+          ? {
+              ...currentRepository,
+              pullRequestDiffs: {
+                ...(currentRepository.pullRequestDiffs ?? {}),
+                [pullRequestNumber]: { status: "loading" },
+              },
+            }
+          : currentRepository,
+      ),
+    )
+
+    void readGhPullRequestDiff(repositoryPath, pullRequestNumber).then((diffState) => {
+      setRepositories((currentRepositories) =>
+        currentRepositories.map((currentRepository) =>
+          currentRepository.id === repositoryId
+            ? {
+                ...currentRepository,
+                pullRequestDiffs: {
+                  ...(currentRepository.pullRequestDiffs ?? {}),
+                  [pullRequestNumber]: diffState,
+                },
+              }
+            : currentRepository,
+        ),
+      )
+    })
+  }, [activePane, activeRepository, activePullRequestDiffState])
+
+  useEffect(() => {
     if (!status) {
       return
     }
@@ -2299,6 +3825,25 @@ function DiffApp({
 
     return () => clearTimeout(timeout)
   }, [status])
+
+  useEffect(() => {
+    const copySelectionToClipboard = (selection: Selection) => {
+      const text = selection.getSelectedText()
+      if (!text) {
+        return
+      }
+
+      const result = copyTextToClipboard(renderer, text)
+      setStatus({
+        text: result.ok ? formatCopiedSelectionStatus(text) : result.message,
+      })
+    }
+
+    renderer.on(CliRenderEvents.SELECTION, copySelectionToClipboard)
+    return () => {
+      renderer.off(CliRenderEvents.SELECTION, copySelectionToClipboard)
+    }
+  }, [renderer])
 
   function setActiveSelection(nextSelection: HunkDiffSelection) {
     if (!activeRepository) {
@@ -2557,8 +4102,11 @@ function DiffApp({
         {activePane.kind === "pull-request" && activeRepository ? (
           <PullRequestPane
             detailState={activePullRequestDetailState}
+            diffState={activePullRequestDiffState}
             onOpenUrl={openPullRequestUrl}
+            pullRequestNumber={activePane.pullRequestNumber}
             summary={activePullRequestSummary}
+            theme={theme}
             width={gitPaneWidth}
           />
         ) : (
