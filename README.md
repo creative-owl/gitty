@@ -31,9 +31,13 @@ bun run diff:staged
 
 Inside the TUI:
 
+- `o` opens another git repository by path. Relative paths and `~` are supported.
+- In the open repository dialog, use `Up`/`Down` to pick a directory and `Tab` to complete it.
 - `Tab` cycles repositories.
+- Click any repository in the sidebar to switch to it.
 - Line wrapping is always on.
 - The left sidebar lists repositories, each with a `Working changes` menu item.
+- For GitHub repositories, the sidebar also lists open PRs split into `Opened by you` and `Needs review`.
 - The git diff UI lives inside a swappable pane and always renders split diffs.
 - `q`, `Esc`, or `Ctrl+C` exits.
 
@@ -45,3 +49,6 @@ You can still pass `--theme <name>` to try another Hunk theme.
 This app uses `hunkdiff/opentui`, which declares OpenTUI and React as peer
 dependencies. The installed OpenTUI package versions are aligned to Hunk's
 current peer range.
+
+PR sections use the GitHub CLI when available. Run `gh auth login` if the
+sidebar reports that PRs are unavailable.

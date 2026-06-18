@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { createCliRenderer } from "@opentui/core"
 import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
@@ -11,7 +12,7 @@ import {
   type HunkDiffSelection,
   type HunkDiffThemeName,
 } from "hunkdiff/opentui"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 type PatchSource = {
   label: string
@@ -28,6 +29,7 @@ type RepositoryView = {
   name: string
   path: string
   files: HunkDiffFile[]
+  pullRequests?: RepositoryPullRequests
   stats: {
     additions: number
     deletions: number
@@ -43,13 +45,50 @@ type CliOptions = {
   repositoryDirs: string[]
 }
 
+type OpenRepositoryStatus = {
+  text: string
+}
+
+type PathSuggestion = {
+  isGitRepository: boolean
+  value: string
+}
+
+type PullRequestSummary = {
+  number: number
+  title: string
+  url: string
+}
+
+type RepositoryPullRequests =
+  | {
+      status: "loading"
+    }
+  | {
+      openedByUser: PullRequestSummary[]
+      needsReview: PullRequestSummary[]
+      status: "loaded"
+    }
+  | {
+      message: string
+      status: "unavailable"
+    }
+
 const DEFAULT_THEME: HunkDiffThemeName = "catppuccin-macchiato"
 const NULL_DIFF_PATH = "/dev/null"
+const OPEN_REPOSITORY_SUGGESTION_ROWS = 5
+const PULL_REQUEST_SECTION_LIMIT = 3
+const REPOSITORY_SIDEBAR_MAX_WIDTH = 45
+const REPOSITORY_SIDEBAR_MIN_WIDTH = 29
+const REPOSITORY_SIDEBAR_WIDTH_RATIO = 0.36
 
 const MACCHIATO = {
+  green: "#a6da95",
   mauve: "#c6a0f6",
   lavender: "#b7bdf8",
+  red: "#ed8796",
   text: "#cad3f5",
+  yellow: "#eed49f",
   subtext0: "#a5adcb",
   surface2: "#5b6078",
   surface0: "#363a4f",
@@ -283,23 +322,30 @@ function resolveGitRepositoryViews(directories: string[], staged: boolean): Repo
     refs.push(ref)
   }
 
-  return refs.map((repository, index) => {
-    const sourceLabel = `${repository.name} ${staged ? "staged changes" : "working changes"}`
-    const patch = readGitDiff(staged, repository.path)
-    const files = patch.trim().length > 0 ? createDiffFilesFromPatch(patch, sourceLabel) : []
+  return refs.map((repository) => createGitRepositoryView(repository, staged))
+}
 
-    return {
-      id: `repository:${index}:${repository.path}`,
-      name: repository.name,
-      path: repository.path,
-      files,
-      stats: summarizeFiles(files),
-    }
-  })
+function createGitRepositoryView(repository: GitRepositoryRef, staged: boolean): RepositoryView {
+  const sourceLabel = `${repository.name} ${staged ? "staged changes" : "working changes"}`
+  const patch = readGitDiff(staged, repository.path)
+  const files = patch.trim().length > 0 ? createDiffFilesFromPatch(patch, sourceLabel) : []
+
+  return {
+    id: `repository:${repository.path}`,
+    name: repository.name,
+    path: repository.path,
+    files,
+    pullRequests: { status: "loading" },
+    stats: summarizeFiles(files),
+  }
+}
+
+function openGitRepository(directory: string, staged: boolean): RepositoryView {
+  return createGitRepositoryView(resolveGitRepository(directory), staged)
 }
 
 function resolveGitRepository(directory: string): GitRepositoryRef {
-  const absolutePath = resolve(directory)
+  const absolutePath = resolve(expandHomePath(directory))
   let result: ReturnType<typeof Bun.spawnSync>
 
   try {
@@ -322,6 +368,232 @@ function resolveGitRepository(directory: string): GitRepositoryRef {
     name: basename(path) || path,
     path,
   }
+}
+
+function expandHomePath(directory: string): string {
+  if (directory === "~") {
+    return homedir()
+  }
+  if (directory.startsWith("~/")) {
+    return join(homedir(), directory.slice(2))
+  }
+  return directory
+}
+
+function createPathSuggestions(input: string): PathSuggestion[] {
+  const context = resolvePathCompletionContext(input)
+  const entries = readDirectoryEntries(context.directoryPath)
+
+  const fragment = context.fragment.toLowerCase()
+  const dotSuggestions = createDotPathSuggestions(context)
+  const directorySuggestions = entries
+    .filter((entry) => entry.isDirectory())
+    .filter((entry) => (context.fragment.startsWith(".") ? true : !entry.name.startsWith(".")))
+    .filter((entry) => entry.name.toLowerCase().startsWith(fragment))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((entry) => {
+      const value = `${context.valuePrefix}${entry.name}/`
+      return {
+        isGitRepository: existsSync(join(context.directoryPath, entry.name, ".git")),
+        value,
+      }
+    })
+
+  return [...dotSuggestions, ...directorySuggestions].slice(0, OPEN_REPOSITORY_SUGGESTION_ROWS)
+}
+
+function readDirectoryEntries(directoryPath: string) {
+  try {
+    return readdirSync(directoryPath, { withFileTypes: true })
+  } catch {
+    return []
+  }
+}
+
+function resolvePathCompletionContext(input: string) {
+  if (input === "") {
+    return {
+      directoryPath: process.cwd(),
+      fragment: "",
+      valuePrefix: "",
+    }
+  }
+
+  if (input === "~") {
+    return {
+      directoryPath: homedir(),
+      fragment: "",
+      valuePrefix: "~/",
+    }
+  }
+
+  const lastSlashIndex = input.lastIndexOf("/")
+  if (lastSlashIndex >= 0) {
+    const valuePrefix = input.slice(0, lastSlashIndex + 1)
+    return {
+      directoryPath: resolve(expandHomePath(valuePrefix)),
+      fragment: input.slice(lastSlashIndex + 1),
+      valuePrefix,
+    }
+  }
+
+  return {
+    directoryPath: process.cwd(),
+    fragment: input,
+    valuePrefix: "",
+  }
+}
+
+function createDotPathSuggestions({
+  directoryPath,
+  fragment,
+  valuePrefix,
+}: {
+  directoryPath: string
+  fragment: string
+  valuePrefix: string
+}): PathSuggestion[] {
+  if (valuePrefix !== "") {
+    return []
+  }
+
+  return [
+    { isGitRepository: existsSync(join(directoryPath, ".git")), value: "./" },
+    { isGitRepository: existsSync(join(resolve(directoryPath, ".."), ".git")), value: "../" },
+  ].filter((suggestion) => suggestion.value.startsWith(fragment))
+}
+
+async function loadRepositoryPullRequests(repositoryPath: string): Promise<RepositoryPullRequests> {
+  const [openedByUser, needsReview] = await Promise.all([
+    readGhPullRequests(repositoryPath, "author:@me"),
+    readGhPullRequests(repositoryPath, "review-requested:@me"),
+  ])
+
+  if (!openedByUser.ok && !needsReview.ok) {
+    return {
+      message: openedByUser.message,
+      status: "unavailable",
+    }
+  }
+
+  return {
+    openedByUser: openedByUser.ok ? openedByUser.pullRequests : [],
+    needsReview: needsReview.ok ? needsReview.pullRequests : [],
+    status: "loaded",
+  }
+}
+
+async function readGhPullRequests(
+  repositoryPath: string,
+  search: string,
+): Promise<
+  | {
+      ok: true
+      pullRequests: PullRequestSummary[]
+    }
+  | {
+      message: string
+      ok: false
+    }
+> {
+  try {
+    const process = Bun.spawn(
+      [
+        "gh",
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        "30",
+        "--search",
+        search,
+        "--json",
+        "number,title,url",
+      ],
+      {
+        cwd: repositoryPath,
+        env: createGhEnvironment(),
+        stderr: "pipe",
+        stdin: "ignore",
+        stdout: "pipe",
+      },
+    )
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+      process.exited,
+      new Response(process.stdout).text(),
+      new Response(process.stderr).text(),
+    ])
+
+    if (exitCode !== 0) {
+      return {
+        message: summarizeGhError(stderr),
+        ok: false,
+      }
+    }
+
+    return {
+      ok: true,
+      pullRequests: parsePullRequestSummaries(stdout),
+    }
+  } catch (error) {
+    return {
+      message: error instanceof SyntaxError ? "Could not parse GitHub PRs." : "Install and authenticate gh to show PRs.",
+      ok: false,
+    }
+  }
+}
+
+function createGhEnvironment(): Record<string, string> {
+  const environment: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === "string") {
+      environment[key] = value
+    }
+  }
+  environment.GH_PROMPT_DISABLED = "1"
+  return environment
+}
+
+function summarizeGhError(stderr: string): string {
+  const detail = stderr.trim().split("\n").find(Boolean)
+  if (!detail) {
+    return "Could not load GitHub PRs."
+  }
+  if (detail.toLowerCase().includes("not a github repository")) {
+    return "No GitHub remote found."
+  }
+  if (detail.toLowerCase().includes("authentication")) {
+    return "Authenticate gh to show PRs."
+  }
+  return detail
+}
+
+function parsePullRequestSummaries(stdout: string): PullRequestSummary[] {
+  const parsed = JSON.parse(stdout) as unknown
+  if (!Array.isArray(parsed)) {
+    return []
+  }
+
+  return parsed.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return []
+    }
+
+    const candidate = item as Record<string, unknown>
+    if (typeof candidate.number !== "number" || typeof candidate.title !== "string") {
+      return []
+    }
+
+    return [
+      {
+        number: candidate.number,
+        title: candidate.title,
+        url: typeof candidate.url === "string" ? candidate.url : "",
+      },
+    ]
+  })
 }
 
 function readGitDiff(staged: boolean, repositoryPath: string): string {
@@ -469,13 +741,63 @@ function normalizeSelection(files: HunkDiffFile[], selection: HunkDiffSelection 
   return defaultSelection(files)
 }
 
+function createPullRequestSidebarRows(pullRequests: RepositoryPullRequests | undefined) {
+  if (!pullRequests) {
+    return []
+  }
+
+  if (pullRequests.status === "loading") {
+    return [
+      { color: MACCHIATO.lavender, text: "  Pull requests" },
+      { color: MACCHIATO.subtext0, text: "    Loading..." },
+    ]
+  }
+
+  if (pullRequests.status === "unavailable") {
+    return [
+      { color: MACCHIATO.lavender, text: "  Pull requests" },
+      { color: MACCHIATO.subtext0, text: `    ${pullRequests.message}` },
+    ]
+  }
+
+  return [
+    { color: MACCHIATO.lavender, text: `  Opened by you (${pullRequests.openedByUser.length})` },
+    ...createPullRequestSectionRows(pullRequests.openedByUser),
+    { color: MACCHIATO.lavender, text: `  Needs review (${pullRequests.needsReview.length})` },
+    ...createPullRequestSectionRows(pullRequests.needsReview),
+  ]
+}
+
+function createPullRequestSectionRows(pullRequests: PullRequestSummary[]) {
+  if (pullRequests.length === 0) {
+    return [{ color: MACCHIATO.subtext0, text: "    None" }]
+  }
+
+  const visiblePullRequests = pullRequests.slice(0, PULL_REQUEST_SECTION_LIMIT).map((pullRequest) => ({
+    color: MACCHIATO.text,
+    text: `    #${pullRequest.number} ${pullRequest.title}`,
+  }))
+  const hiddenPullRequestCount = pullRequests.length - visiblePullRequests.length
+
+  if (hiddenPullRequestCount <= 0) {
+    return visiblePullRequests
+  }
+
+  return [
+    ...visiblePullRequests,
+    { color: MACCHIATO.subtext0, text: `    +${hiddenPullRequestCount} more` },
+  ]
+}
+
 function RepositorySidebar({
   activeRepositoryId,
+  onOpenRepository,
   onSelectRepository,
   width,
   repositories,
 }: {
   activeRepositoryId: string
+  onOpenRepository: () => void
   onSelectRepository: (repositoryId: string) => void
   width: number
   repositories: RepositoryView[]
@@ -495,17 +817,36 @@ function RepositorySidebar({
       }}
     >
       <scrollbox style={{ width: "100%", height: "100%" }} scrollY>
+        <box style={{ width: "100%", height: 2, flexDirection: "column" }}>
+          <box
+            style={{
+              width: "100%",
+              height: 1,
+              backgroundColor: MACCHIATO.surface0,
+            }}
+            onMouseUp={onOpenRepository}
+          >
+            <text fg={MACCHIATO.mauve}>{fitText("+ Open repository", contentWidth)}</text>
+          </box>
+          <box style={{ width: "100%", height: 1 }} />
+        </box>
         {repositories.map((repository) => {
           const active = repository.id === activeRepositoryId
+          const pullRequestRows = createPullRequestSidebarRows(repository.pullRequests)
+          const selectRepository = () => onSelectRepository(repository.id)
 
           return (
-            <box key={repository.id} style={{ width: "100%", height: 5, flexDirection: "column" }}>
-              <box style={{ width: "100%", height: 1 }}>
+            <box
+              key={repository.id}
+              style={{ width: "100%", height: 5 + pullRequestRows.length, flexDirection: "column" }}
+              onMouseUp={selectRepository}
+            >
+              <box style={{ width: "100%", height: 1 }} onMouseUp={selectRepository}>
                 <text fg={active ? MACCHIATO.lavender : MACCHIATO.text}>
                   {fitText(repository.name, contentWidth)}
                 </text>
               </box>
-              <box style={{ width: "100%", height: 1 }}>
+              <box style={{ width: "100%", height: 1 }} onMouseUp={selectRepository}>
                 <text fg={MACCHIATO.subtext0}>{fitText(repository.path, contentWidth)}</text>
               </box>
               <box
@@ -514,13 +855,13 @@ function RepositorySidebar({
                   height: 1,
                   backgroundColor: active ? MACCHIATO.surface0 : MACCHIATO.mantle,
                 }}
-                onMouseUp={() => onSelectRepository(repository.id)}
+                onMouseUp={selectRepository}
               >
                 <text fg={active ? MACCHIATO.mauve : MACCHIATO.text}>
                   {fitText(`${active ? ">" : " "} Working changes`, contentWidth)}
                 </text>
               </box>
-              <box style={{ width: "100%", height: 1 }}>
+              <box style={{ width: "100%", height: 1 }} onMouseUp={selectRepository}>
                 <text fg={MACCHIATO.subtext0}>
                   {fitText(
                     `  ${pluralize(repository.files.length, "file")} +${repository.stats.additions} -${repository.stats.deletions}`,
@@ -528,11 +869,103 @@ function RepositorySidebar({
                   )}
                 </text>
               </box>
-              <box style={{ width: "100%", height: 1 }} />
+              {pullRequestRows.map((row, index) => (
+                <box
+                  key={`${repository.id}:pull-request-row:${index}`}
+                  style={{ width: "100%", height: 1 }}
+                  onMouseUp={selectRepository}
+                >
+                  <text fg={row.color}>{fitText(row.text, contentWidth)}</text>
+                </box>
+              ))}
+              <box style={{ width: "100%", height: 1 }} onMouseUp={selectRepository} />
             </box>
           )
         })}
       </scrollbox>
+    </box>
+  )
+}
+
+function OpenRepositoryPrompt({
+  message,
+  onCompleteSuggestion,
+  onInput,
+  onSubmit,
+  selectedSuggestionIndex,
+  suggestions,
+  value,
+  width,
+}: {
+  message?: string
+  onCompleteSuggestion: (value: string) => void
+  onInput: (value: string) => void
+  onSubmit: (value: string) => void
+  selectedSuggestionIndex: number
+  suggestions: PathSuggestion[]
+  value: string
+  width: number
+}) {
+  const contentWidth = Math.max(1, width - 4)
+  const emptyRows = Math.max(0, OPEN_REPOSITORY_SUGGESTION_ROWS - suggestions.length)
+  const handleSubmit = (submittedValue: unknown) => {
+    if (typeof submittedValue === "string") {
+      onSubmit(submittedValue)
+    }
+  }
+
+  return (
+    <box
+      title="Open Repository"
+      style={{
+        width,
+        height: 4 + OPEN_REPOSITORY_SUGGESTION_ROWS,
+        border: true,
+        borderStyle: "rounded",
+        borderColor: message ? MACCHIATO.red : MACCHIATO.surface2,
+        backgroundColor: MACCHIATO.mantle,
+        flexDirection: "column",
+        paddingLeft: 1,
+        paddingRight: 1,
+      }}
+    >
+      <input
+        value={value}
+        placeholder="Path to git repository"
+        focused
+        onInput={onInput}
+        onSubmit={handleSubmit}
+        style={{
+          width: "100%",
+          backgroundColor: MACCHIATO.base,
+        }}
+      />
+      <box style={{ width: "100%", height: 1 }}>
+        <text fg={message ? MACCHIATO.red : MACCHIATO.subtext0}>
+          {fitText(message ?? "Tab completes selected, Enter opens.", contentWidth)}
+        </text>
+      </box>
+      {suggestions.map((suggestion, index) => {
+        const selected = index === selectedSuggestionIndex
+        const label = `${selected ? ">" : " "} ${suggestion.value}${suggestion.isGitRepository ? "  git" : ""}`
+
+        return (
+          <box
+            key={suggestion.value}
+            style={{
+              width: "100%",
+              height: 1,
+              backgroundColor: selected ? MACCHIATO.surface0 : MACCHIATO.mantle,
+            }}
+            onMouseUp={() => onCompleteSuggestion(suggestion.value)}
+          >
+            <text fg={selected ? MACCHIATO.mauve : MACCHIATO.text}>{fitText(label, contentWidth)}</text>
+          </box>
+        )
+      })}
+      {Array.from({ length: emptyRows }, (_, index) => (
+        <box key={`empty-suggestion-${index}`} style={{ width: "100%", height: 1 }} />
+      ))}
     </box>
   )
 }
@@ -592,19 +1025,28 @@ function GitPane({
 }
 
 function DiffApp({
+  initialRepositories,
+  staged,
   theme,
-  repositories,
 }: {
+  initialRepositories: RepositoryView[]
+  staged: boolean
   theme: HunkDiffThemeName
-  repositories: RepositoryView[]
 }) {
   const renderer = useRenderer()
   const terminal = useTerminalDimensions()
+  const pullRequestLoadIds = useRef(new Set<string>())
+  const [repositories, setRepositories] = useState<RepositoryView[]>(initialRepositories)
   const firstRepository = repositories[0]
   const [activeRepositoryId, setActiveRepositoryId] = useState(firstRepository?.id ?? "")
   const [selections, setSelections] = useState<Record<string, HunkDiffSelection>>(() =>
     Object.fromEntries(repositories.map((repository) => [repository.id, defaultSelection(repository.files)])),
   )
+  const [isOpenPromptVisible, setOpenPromptVisible] = useState(false)
+  const [repositoryPathInput, setRepositoryPathInput] = useState("")
+  const [selectedPathSuggestionIndex, setSelectedPathSuggestionIndex] = useState(0)
+  const [openPromptError, setOpenPromptError] = useState("")
+  const [status, setStatus] = useState<OpenRepositoryStatus>()
 
   const activeRepository = useMemo(
     () => repositories.find((repository) => repository.id === activeRepositoryId) ?? firstRepository,
@@ -613,9 +1055,33 @@ function DiffApp({
   const files = activeRepository?.files ?? []
   const selection = normalizeSelection(files, activeRepository ? selections[activeRepository.id] : undefined)
   const shellWidth = Math.max(1, terminal.width - 2)
-  const repositoryWidth = Math.min(30, Math.max(19, Math.floor(shellWidth * 0.24)))
+  const repositoryWidth = Math.min(
+    REPOSITORY_SIDEBAR_MAX_WIDTH,
+    Math.max(REPOSITORY_SIDEBAR_MIN_WIDTH, Math.floor(shellWidth * REPOSITORY_SIDEBAR_WIDTH_RATIO)),
+  )
   const gitPaneWidth = Math.max(1, shellWidth - repositoryWidth - 1)
   const headerWidth = shellWidth
+  const commandText = `${pluralize(repositories.length, "repository", "repositories")}  |  o open repository  |  tab/click repository  |  q quit`
+  const pathSuggestions = useMemo(() => createPathSuggestions(repositoryPathInput), [repositoryPathInput])
+  const normalizedPathSuggestionIndex =
+    pathSuggestions.length > 0 ? Math.min(selectedPathSuggestionIndex, pathSuggestions.length - 1) : 0
+
+  useEffect(() => {
+    for (const repository of repositories) {
+      if (repository.pullRequests?.status !== "loading" || pullRequestLoadIds.current.has(repository.id)) {
+        continue
+      }
+
+      pullRequestLoadIds.current.add(repository.id)
+      void loadRepositoryPullRequests(repository.path).then((pullRequests) => {
+        setRepositories((currentRepositories) =>
+          currentRepositories.map((currentRepository) =>
+            currentRepository.id === repository.id ? { ...currentRepository, pullRequests } : currentRepository,
+          ),
+        )
+      })
+    }
+  }, [repositories])
 
   function setActiveSelection(nextSelection: HunkDiffSelection) {
     if (!activeRepository) {
@@ -626,6 +1092,84 @@ function DiffApp({
       ...current,
       [activeRepository.id]: nextSelection,
     }))
+  }
+
+  function showOpenRepositoryPrompt() {
+    setRepositoryPathInput("")
+    setSelectedPathSuggestionIndex(0)
+    setOpenPromptError("")
+    setStatus(undefined)
+    setOpenPromptVisible(true)
+  }
+
+  function cancelOpenRepositoryPrompt() {
+    setOpenPromptVisible(false)
+    setRepositoryPathInput("")
+    setSelectedPathSuggestionIndex(0)
+    setOpenPromptError("")
+  }
+
+  function updateRepositoryPathInput(value: string) {
+    setRepositoryPathInput(value)
+    setSelectedPathSuggestionIndex(0)
+    setOpenPromptError("")
+  }
+
+  function completeSelectedPathSuggestion() {
+    const suggestion = pathSuggestions[normalizedPathSuggestionIndex]
+    if (!suggestion) {
+      return
+    }
+
+    updateRepositoryPathInput(suggestion.value)
+  }
+
+  function movePathSuggestion(delta: number) {
+    if (pathSuggestions.length === 0) {
+      return
+    }
+
+    setSelectedPathSuggestionIndex((currentIndex) => {
+      const nextIndex = currentIndex + delta
+      return (nextIndex + pathSuggestions.length) % pathSuggestions.length
+    })
+  }
+
+  function submitOpenRepository(input: string) {
+    const directory = input.trim()
+    if (!directory) {
+      setOpenPromptError("Enter a git repository path.")
+      return
+    }
+
+    let nextRepository: RepositoryView
+    try {
+      nextRepository = openGitRepository(directory, staged)
+    } catch (error) {
+      setOpenPromptError(error instanceof Error ? error.message : String(error))
+      return
+    }
+
+    const existingRepository = repositories.find((repository) => repository.path === nextRepository.path)
+    if (existingRepository) {
+      setActiveRepositoryId(existingRepository.id)
+      setOpenPromptVisible(false)
+      setRepositoryPathInput("")
+      setOpenPromptError("")
+      setStatus({ text: `Repository already open: ${existingRepository.name}.` })
+      return
+    }
+
+    setRepositories((currentRepositories) => [...currentRepositories, nextRepository])
+    setSelections((currentSelections) => ({
+      ...currentSelections,
+      [nextRepository.id]: defaultSelection(nextRepository.files),
+    }))
+    setActiveRepositoryId(nextRepository.id)
+    setOpenPromptVisible(false)
+    setRepositoryPathInput("")
+    setOpenPromptError("")
+    setStatus({ text: `Opened ${nextRepository.name}.` })
   }
 
   function selectNextRepository() {
@@ -647,8 +1191,40 @@ function DiffApp({
     const name = key.name?.toLowerCase() ?? ""
     const sequence = key.sequence?.toLowerCase()
 
+    if (isOpenPromptVisible) {
+      if (name === "escape") {
+        key.preventDefault()
+        cancelOpenRepositoryPrompt()
+        return
+      }
+
+      if (name === "tab" || sequence === "\t") {
+        key.preventDefault()
+        completeSelectedPathSuggestion()
+        return
+      }
+
+      if (name === "up" || name === "kpup") {
+        key.preventDefault()
+        movePathSuggestion(-1)
+        return
+      }
+
+      if (name === "down" || name === "kpdown") {
+        key.preventDefault()
+        movePathSuggestion(1)
+        return
+      }
+      return
+    }
+
     if (name === "escape" || name === "q" || sequence === "q") {
       renderer.destroy()
+      return
+    }
+
+    if (name === "o" || sequence === "o") {
+      showOpenRepositoryPrompt()
       return
     }
 
@@ -674,17 +1250,30 @@ function DiffApp({
         <text fg={MACCHIATO.lavender}>{fitText("Gitty", headerWidth)}</text>
       </box>
       <box style={{ width: "100%", height: 1 }}>
-        <text fg={MACCHIATO.subtext0}>
-          {fitText(
-            `${pluralize(repositories.length, "repository", "repositories")}  |  tab repository  q quit`,
-            headerWidth,
-          )}
+        <text fg={status ? MACCHIATO.green : MACCHIATO.subtext0}>
+          {fitText(status?.text ?? commandText, headerWidth)}
         </text>
       </box>
       <box style={{ height: 1 }} />
+      {isOpenPromptVisible ? (
+        <>
+          <OpenRepositoryPrompt
+            message={openPromptError}
+            onCompleteSuggestion={updateRepositoryPathInput}
+            onInput={updateRepositoryPathInput}
+            onSubmit={submitOpenRepository}
+            selectedSuggestionIndex={normalizedPathSuggestionIndex}
+            suggestions={pathSuggestions}
+            value={repositoryPathInput}
+            width={headerWidth}
+          />
+          <box style={{ height: 1 }} />
+        </>
+      ) : null}
       <box style={{ width: "100%", flexGrow: 1, flexDirection: "row" }}>
         <RepositorySidebar
           activeRepositoryId={activeRepository?.id ?? ""}
+          onOpenRepository={showOpenRepositoryPrompt}
           onSelectRepository={setActiveRepositoryId}
           width={repositoryWidth}
           repositories={repositories}
@@ -720,8 +1309,9 @@ async function main() {
 
   createRoot(renderer).render(
     <DiffApp
+      initialRepositories={repositories}
+      staged={options.staged}
       theme={options.theme}
-      repositories={repositories}
     />,
   )
 }
