@@ -46,14 +46,19 @@ export function createPullRequestSidebarRows(pullRequests: RepositoryPullRequest
   }
 
   return [
-    { color: MACCHIATO.lavender, text: `  Opened by you (${pullRequests.openedByUser.length})` },
-    ...createPullRequestSectionRows(pullRequests.openedByUser),
-    { color: MACCHIATO.lavender, text: `  Needs review (${pullRequests.needsReview.length})` },
-    ...createPullRequestSectionRows(pullRequests.needsReview),
+    { color: MACCHIATO.lavender, text: `  Your pr's (${pullRequests.openedByUser.length})` },
+    ...createPullRequestSectionRows(pullRequests.openedByUser, { needsYourReview: false }),
+    { color: MACCHIATO.lavender, text: `  Needs your review (${pullRequests.needsReview.length})` },
+    ...createPullRequestSectionRows(pullRequests.needsReview, { needsYourReview: true }),
   ]
 }
 
-function createPullRequestSectionRows(pullRequests: PullRequestSummary[]): PullRequestSidebarRow[] {
+function createPullRequestSectionRows(
+  pullRequests: PullRequestSummary[],
+  options: {
+    needsYourReview: boolean
+  },
+): PullRequestSidebarRow[] {
   if (pullRequests.length === 0) {
     return [{ color: MACCHIATO.subtext0, text: "    None" }]
   }
@@ -64,7 +69,7 @@ function createPullRequestSectionRows(pullRequests: PullRequestSummary[]): PullR
       {
         color: MACCHIATO.text,
         pullRequest,
-        rightColor: getPullRequestCheckStateColor(pullRequest.checkState),
+        rightColor: getPullRequestStatusDotColor(pullRequest, options),
         rightText: PULL_REQUEST_STATUS_DOT,
         text: `    #${pullRequest.number} ${pullRequest.title}`,
       },
@@ -72,7 +77,7 @@ function createPullRequestSectionRows(pullRequests: PullRequestSummary[]): PullR
 
     if (pullRequest.hasChangesRequested) {
       rows.push({
-        color: MACCHIATO.red,
+        color: MACCHIATO.yellow,
         pullRequest,
         text: "    Changes requested",
       })
@@ -90,6 +95,27 @@ function createPullRequestSectionRows(pullRequests: PullRequestSummary[]): PullR
     ...visiblePullRequestRows,
     { color: MACCHIATO.subtext0, text: `    +${hiddenPullRequestCount} more` },
   ]
+}
+
+function getPullRequestStatusDotColor(
+  pullRequest: PullRequestSummary,
+  options: {
+    needsYourReview: boolean
+  },
+) {
+  if (pullRequest.checkState === "failed") {
+    return MACCHIATO.red
+  }
+  if (pullRequest.checkState === "running") {
+    return MACCHIATO.yellow
+  }
+  if (options.needsYourReview) {
+    return MACCHIATO.yellow
+  }
+  if (pullRequest.reviewState === "changes_requested" || pullRequest.reviewState === "review_required") {
+    return MACCHIATO.yellow
+  }
+  return MACCHIATO.green
 }
 
 export function getPullRequestCheckStateColor(checkState: PullRequestCheckState) {

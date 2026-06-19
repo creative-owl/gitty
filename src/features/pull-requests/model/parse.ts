@@ -1,19 +1,15 @@
 import {
   asArray,
   isRecord,
-  readNumber,
   readString,
 } from "../../../shared/lib/record"
 import type {
   PullRequestCheckState,
   PullRequestDetail,
   PullRequestLabel,
-  PullRequestReviewComment,
-  PullRequestReviewContext,
+  PullRequestReviewState,
   PullRequestReviewer,
-  PullRequestReviewThread,
   PullRequestSummary,
-  PullRequestTimelineItem,
 } from "./types"
 
 const FAILED_CHECK_STATES = new Set([
@@ -44,11 +40,14 @@ export function parsePullRequestSummaries(stdout: string): PullRequestSummary[] 
       return []
     }
 
+    const reviewState = resolvePullRequestReviewState(candidate.reviewDecision)
+
     return [
       {
         checkState: resolvePullRequestCheckState(candidate.statusCheckRollup),
-        hasChangesRequested: normalizeGitHubState(candidate.reviewDecision) === "CHANGES_REQUESTED",
+        hasChangesRequested: reviewState === "changes_requested",
         number: candidate.number,
+        reviewState,
         title: candidate.title,
         url: typeof candidate.url === "string" ? candidate.url : "",
       },
@@ -56,7 +55,7 @@ export function parsePullRequestSummaries(stdout: string): PullRequestSummary[] 
   })
 }
 
-export function parsePullRequestDetail(stdout: string, reviewContext?: PullRequestReviewContext): PullRequestDetail {
+export function parsePullRequestDetail(stdout: string, unresolvedReviewThreadCount?: number): PullRequestDetail {
   const parsed = JSON.parse(stdout) as unknown
   if (!isRecord(parsed)) {
     throw new SyntaxError("PR detail response must be an object.")
@@ -67,139 +66,28 @@ export function parsePullRequestDetail(stdout: string, reviewContext?: PullReque
     author: readPersonName(parsed.author) || "Unknown",
     body: readString(parsed.body).trim(),
     checkState: resolvePullRequestCheckState(parsed.statusCheckRollup),
-    comments: parsePullRequestTimeline(parsed.comments, parsed.reviews || parsed.latestReviews, reviewContext),
     labels: parsePullRequestLabels(parsed.labels),
     number: typeof parsed.number === "number" ? parsed.number : 0,
     reviewDecision: formatGitHubStateLabel(parsed.reviewDecision),
     reviewers: parsePullRequestReviewers(parsed.latestReviews, parsed.reviewRequests),
     title: readString(parsed.title),
+    unresolvedReviewThreadCount,
     url: readString(parsed.url),
   }
 }
 
-function parsePullRequestTimeline(
-  comments: unknown,
-  latestReviews: unknown,
-  reviewContext?: PullRequestReviewContext,
-): PullRequestTimelineItem[] {
-  const commentItems = asArray(comments).flatMap((comment) => {
-    if (!isRecord(comment)) {
-      return []
-    }
-
-    const body = readString(comment.body).trim()
-    if (!body) {
-      return []
-    }
-
-    return [
-      {
-        author: readPersonName(comment.author) || "Unknown",
-        body,
-        createdAt: readString(comment.createdAt),
-        kind: "comment" as const,
-      },
-    ]
-  })
-
-  const reviewCommentGroups = createReviewCommentGroups(reviewContext?.comments ?? [])
-  const reviewItems = (reviewContext?.reviews.length ? reviewContext.reviews : asArray(latestReviews)).flatMap((review) => {
-    if (!isRecord(review)) {
-      return []
-    }
-
-    const reviewId = readNumber(review.id) ?? readNumber(review.databaseId)
-    const state = formatGitHubStateLabel(review.state)
-    const body = readString(review.body).trim()
-    if (!body && !state) {
-      return []
-    }
-
-    return [
-      {
-        author: readPersonName(review.author) || readPersonName(review.user) || "Unknown",
-        body: body || `Review: ${state}`,
-        createdAt: readString(review.submittedAt) || readString(review.submitted_at) || readString(review.createdAt),
-        kind: "review" as const,
-        reviewThreads: reviewId ? createReviewThreads(reviewCommentGroups.get(reviewId) ?? []) : [],
-        state,
-      },
-    ]
-  })
-
-  return [...commentItems, ...reviewItems].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-}
-
-function createReviewCommentGroups(comments: unknown[]): Map<number, PullRequestReviewComment[]> {
-  const commentsByReviewId = new Map<number, PullRequestReviewComment[]>()
-
-  for (const comment of comments) {
-    if (!isRecord(comment)) {
-      continue
-    }
-
-    const reviewId = readNumber(comment.pull_request_review_id) ?? readNumber(comment.pullRequestReviewId)
-    const parsedComment = parseReviewComment(comment)
-    if (!reviewId || !parsedComment) {
-      continue
-    }
-
-    const reviewComments = commentsByReviewId.get(reviewId) ?? []
-    reviewComments.push(parsedComment)
-    commentsByReviewId.set(reviewId, reviewComments)
+function resolvePullRequestReviewState(value: unknown): PullRequestReviewState | undefined {
+  const normalized = normalizeGitHubState(value)
+  if (normalized === "APPROVED") {
+    return "approved"
   }
-
-  return commentsByReviewId
-}
-
-function parseReviewComment(comment: Record<string, unknown>): PullRequestReviewComment | undefined {
-  const id = readNumber(comment.id)
-  const body = readString(comment.body).trim()
-  if (!id || !body) {
-    return undefined
+  if (normalized === "CHANGES_REQUESTED") {
+    return "changes_requested"
   }
-
-  const line = readNumber(comment.line) ?? readNumber(comment.original_line)
-  return {
-    author: readPersonName(comment.user) || readPersonName(comment.author) || "Unknown",
-    body,
-    createdAt: readString(comment.created_at) || readString(comment.createdAt),
-    id,
-    line,
-    parentId: readNumber(comment.in_reply_to_id) ?? readNumber(comment.inReplyToId),
-    path: readString(comment.path),
+  if (normalized === "REVIEW_REQUIRED") {
+    return "review_required"
   }
-}
-
-function createReviewThreads(comments: PullRequestReviewComment[]): PullRequestReviewThread[] {
-  const commentsById = new Map(comments.map((comment) => [comment.id, comment]))
-  const repliesByParentId = new Map<number, PullRequestReviewComment[]>()
-
-  for (const comment of comments) {
-    if (!comment.parentId || !commentsById.has(comment.parentId)) {
-      continue
-    }
-
-    const replies = repliesByParentId.get(comment.parentId) ?? []
-    replies.push(comment)
-    repliesByParentId.set(comment.parentId, replies)
-  }
-
-  return comments
-    .filter((comment) => !comment.parentId || !commentsById.has(comment.parentId))
-    .map((comment) => ({
-      ...comment,
-      replies: sortReviewComments(repliesByParentId.get(comment.id) ?? []),
-    }))
-    .sort(compareReviewComments)
-}
-
-function sortReviewComments(comments: PullRequestReviewComment[]) {
-  return [...comments].sort(compareReviewComments)
-}
-
-function compareReviewComments(a: PullRequestReviewComment, b: PullRequestReviewComment) {
-  return a.createdAt.localeCompare(b.createdAt) || a.id - b.id
+  return undefined
 }
 
 function parsePullRequestReviewers(latestReviews: unknown, reviewRequests: unknown): PullRequestReviewer[] {

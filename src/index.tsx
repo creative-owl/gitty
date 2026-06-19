@@ -3,6 +3,7 @@ import { createRoot } from "@opentui/react"
 import { parseCliOptions, usage } from "./app/cli"
 import { DiffApp } from "./app/DiffApp"
 import { resolveRepositories } from "./features/repositories/model/repositories"
+import { isPersistableWorkspace } from "./features/repositories/model/workspaces"
 
 async function main() {
   const options = parseCliOptions(Bun.argv.slice(2))
@@ -13,6 +14,10 @@ async function main() {
   }
 
   const repositories = await resolveRepositories(options)
+  const persistWorkspaces =
+    !options.patchFile &&
+    !options.sample &&
+    repositories.every((repository) => isPersistableWorkspace(repository))
   const renderer = await createCliRenderer({
     screenMode: "alternate-screen",
     useMouse: true,
@@ -23,6 +28,7 @@ async function main() {
   createRoot(renderer).render(
     <DiffApp
       initialRepositories={repositories}
+      persistWorkspaces={persistWorkspaces}
       staged={options.staged}
       theme={options.theme}
     />,

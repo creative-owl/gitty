@@ -1,12 +1,30 @@
 import { createDiffFilesFromPatch } from "../../diff/model/diff"
+import { asArray, isRecord } from "../../../shared/lib/record"
 import type {
   PullRequestDetailState,
   PullRequestDiffState,
-  PullRequestReviewContext,
   PullRequestSummary,
   RepositoryPullRequests,
 } from "./types"
 import { parsePullRequestDetail, parsePullRequestSummaries } from "./parse"
+
+const PULL_REQUEST_REVIEW_THREADS_QUERY = `
+  query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100, after: $endCursor) {
+          nodes {
+            isResolved
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+    }
+  }
+`
 
 export async function loadRepositoryPullRequests(repositoryPath: string): Promise<RepositoryPullRequests> {
   const [openedByUser, needsReview] = await Promise.all([
@@ -102,7 +120,7 @@ export async function readGhPullRequestDetail(
         "view",
         String(pullRequestNumber),
         "--json",
-        "assignees,author,body,comments,labels,latestReviews,number,reviewDecision,reviewRequests,reviews,statusCheckRollup,title,url",
+        "assignees,author,body,labels,latestReviews,number,reviewDecision,reviewRequests,statusCheckRollup,title,url",
       ],
       {
         cwd: repositoryPath,
@@ -126,10 +144,13 @@ export async function readGhPullRequestDetail(
       }
     }
 
-    const reviewContext = await readGhPullRequestReviewContext(repositoryPath, pullRequestNumber)
+    const unresolvedReviewThreadCount = await readGhPullRequestUnresolvedReviewThreadCount(
+      repositoryPath,
+      pullRequestNumber,
+    )
 
     return {
-      detail: parsePullRequestDetail(stdout, reviewContext),
+      detail: parsePullRequestDetail(stdout, unresolvedReviewThreadCount),
       status: "loaded",
     }
   } catch (error) {
@@ -140,34 +161,35 @@ export async function readGhPullRequestDetail(
   }
 }
 
-async function readGhPullRequestReviewContext(
+async function readGhPullRequestUnresolvedReviewThreadCount(
   repositoryPath: string,
   pullRequestNumber: number,
-): Promise<PullRequestReviewContext | undefined> {
-  const [reviews, comments] = await Promise.all([
-    readGhApiPaginatedArray(repositoryPath, `repos/{owner}/{repo}/pulls/${pullRequestNumber}/reviews`),
-    readGhApiPaginatedArray(repositoryPath, `repos/{owner}/{repo}/pulls/${pullRequestNumber}/comments`),
-  ])
-
-  if (!reviews && !comments) {
-    return undefined
-  }
-
-  return {
-    comments: comments ?? [],
-    reviews: reviews ?? [],
-  }
-}
-
-async function readGhApiPaginatedArray(repositoryPath: string, endpoint: string): Promise<unknown[] | undefined> {
+): Promise<number | undefined> {
   try {
-    const process = Bun.spawn(["gh", "api", endpoint, "--paginate", "--slurp"], {
-      cwd: repositoryPath,
-      env: createGhEnvironment(),
-      stderr: "pipe",
-      stdin: "ignore",
-      stdout: "pipe",
-    })
+    const process = Bun.spawn(
+      [
+        "gh",
+        "api",
+        "graphql",
+        "--paginate",
+        "--slurp",
+        "-F",
+        "owner={owner}",
+        "-F",
+        "name={repo}",
+        "-F",
+        `number=${pullRequestNumber}`,
+        "-f",
+        `query=${PULL_REQUEST_REVIEW_THREADS_QUERY}`,
+      ],
+      {
+        cwd: repositoryPath,
+        env: createGhEnvironment(),
+        stderr: "pipe",
+        stdin: "ignore",
+        stdout: "pipe",
+      },
+    )
 
     const [exitCode, stdout] = await Promise.all([
       process.exited,
@@ -178,19 +200,43 @@ async function readGhApiPaginatedArray(repositoryPath: string, endpoint: string)
       return undefined
     }
 
-    return parseGhPaginatedArray(stdout)
+    return parseUnresolvedReviewThreadCount(stdout)
   } catch {
     return undefined
   }
 }
 
-function parseGhPaginatedArray(stdout: string): unknown[] {
+function parseUnresolvedReviewThreadCount(stdout: string) {
   const parsed = JSON.parse(stdout) as unknown
-  if (!Array.isArray(parsed)) {
-    return []
+  const pages = Array.isArray(parsed) ? parsed : [parsed]
+  let foundReviewThreads = false
+  let count = 0
+
+  for (const page of pages) {
+    if (!isRecord(page)) {
+      continue
+    }
+    if (asArray(page.errors).length > 0) {
+      return undefined
+    }
+
+    const data = isRecord(page.data) ? page.data : undefined
+    const repository = data && isRecord(data.repository) ? data.repository : undefined
+    const pullRequest = repository && isRecord(repository.pullRequest) ? repository.pullRequest : undefined
+    const reviewThreads = pullRequest && isRecord(pullRequest.reviewThreads) ? pullRequest.reviewThreads : undefined
+    if (!reviewThreads) {
+      continue
+    }
+
+    for (const thread of asArray(reviewThreads?.nodes)) {
+      if (isRecord(thread) && thread.isResolved === false) {
+        count += 1
+      }
+    }
+    foundReviewThreads = true
   }
 
-  return parsed.every(Array.isArray) ? parsed.flatMap((page) => page) : parsed
+  return foundReviewThreads ? count : undefined
 }
 
 export async function readGhPullRequestDiff(

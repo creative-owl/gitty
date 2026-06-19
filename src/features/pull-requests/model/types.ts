@@ -1,6 +1,7 @@
 import type { HunkDiffFile } from "hunkdiff/opentui"
 
 export type PullRequestCheckState = "failed" | "running" | "passed"
+export type PullRequestReviewState = "approved" | "changes_requested" | "review_required"
 
 export type PullRequestDetailState =
   | {
@@ -33,12 +34,12 @@ export type PullRequestDetail = {
   author: string
   body: string
   checkState: PullRequestCheckState
-  comments: PullRequestTimelineItem[]
   labels: PullRequestLabel[]
   number: number
   reviewDecision?: string
   reviewers: PullRequestReviewer[]
   title: string
+  unresolvedReviewThreadCount?: number
   url: string
 }
 
@@ -56,36 +57,9 @@ export type PullRequestSummary = {
   checkState: PullRequestCheckState
   hasChangesRequested: boolean
   number: number
+  reviewState?: PullRequestReviewState
   title: string
   url: string
-}
-
-export type PullRequestTimelineItem = {
-  author: string
-  body: string
-  createdAt: string
-  kind: "comment" | "review"
-  reviewThreads?: PullRequestReviewThread[]
-  state?: string
-}
-
-export type PullRequestReviewThread = PullRequestReviewComment & {
-  replies: PullRequestReviewComment[]
-}
-
-export type PullRequestReviewComment = {
-  author: string
-  body: string
-  createdAt: string
-  id: number
-  line?: number
-  parentId?: number
-  path?: string
-}
-
-export type PullRequestReviewContext = {
-  comments: unknown[]
-  reviews: unknown[]
 }
 
 export type PullRequestTab = "diff" | "discussion"

@@ -10,6 +10,7 @@ import {
   type PatchSource,
 } from "../../diff/model/diff"
 import type { GitRepositoryRef, RepositoryView } from "./types"
+import { readSavedWorkspaceState } from "./workspaces"
 
 export type RepositoryResolveOptions = {
   patchFile?: string
@@ -46,6 +47,18 @@ export async function resolveRepositories(options: RepositoryResolveOptions): Pr
     }
   }
 
+  const savedWorkspaces = readSavedWorkspaceState()
+  if (savedWorkspaces) {
+    if (savedWorkspaces.paths.length === 0) {
+      return []
+    }
+
+    const repositories = resolveAvailableGitRepositoryViews(savedWorkspaces.paths, options.staged)
+    if (repositories.length > 0) {
+      return repositories
+    }
+  }
+
   return resolveGitRepositoryViews([process.cwd()], options.staged)
 }
 
@@ -74,6 +87,35 @@ function resolveGitRepositoryViews(directories: string[], staged: boolean): Repo
   }
 
   return refs.map((repository) => createGitRepositoryView(repository, staged))
+}
+
+function resolveAvailableGitRepositoryViews(directories: string[], staged: boolean): RepositoryView[] {
+  const views: RepositoryView[] = []
+
+  for (const directory of directories) {
+    try {
+      views.push(openGitRepository(directory, staged))
+    } catch {
+      continue
+    }
+  }
+
+  return uniqueRepositoryViews(views)
+}
+
+function uniqueRepositoryViews(repositories: RepositoryView[]) {
+  const seenPaths = new Set<string>()
+  const uniqueRepositories: RepositoryView[] = []
+
+  for (const repository of repositories) {
+    if (seenPaths.has(repository.path)) {
+      continue
+    }
+    seenPaths.add(repository.path)
+    uniqueRepositories.push(repository)
+  }
+
+  return uniqueRepositories
 }
 
 function createGitRepositoryView(repository: GitRepositoryRef, staged: boolean): RepositoryView {

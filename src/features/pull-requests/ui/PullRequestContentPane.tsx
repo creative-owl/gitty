@@ -9,7 +9,7 @@ import type {
   PullRequestTab,
 } from "../model/types"
 import { PullRequestDiffContent } from "./PullRequestDiffContent"
-import { CommentChain, DescriptionMarkdownBlock, PullRequestTitleBlock } from "./PullRequestDiscussion"
+import { DescriptionMarkdownBlock, PullRequestTitleBlock } from "./PullRequestDiscussion"
 
 export function PullRequestContentPane({
   activeTab,
@@ -94,7 +94,6 @@ export function PullRequestContentPane({
         <scrollbox style={{ width: "100%", flexGrow: 1 }} scrollY>
           <PullRequestTitleBlock detail={detail} onOpenUrl={onOpenUrl} width={contentWidth} />
           <DescriptionMarkdownBlock markdown={detail.body} width={contentWidth} />
-          <CommentChain comments={detail.comments} width={contentWidth} />
         </scrollbox>
       ) : (
         <PullRequestDiffContent diffState={diffState} theme={theme} width={contentWidth} />

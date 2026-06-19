@@ -1,4 +1,4 @@
-import { pushWrappedRows, type TextRow } from "../../../shared/lib/text"
+import { pluralize, pushWrappedRows, type TextRow } from "../../../shared/lib/text"
 import { MACCHIATO } from "../../../shared/theme"
 import { TextRows } from "../../../shared/ui/TextRows"
 import { formatCheckStateLabel } from "../model/format"
@@ -67,6 +67,13 @@ function createPullRequestMetadataRows(detail: PullRequestDetail, width: number)
   }
 
   rows.push({ color: MACCHIATO.subtext0, text: "" })
+  rows.push({ color: MACCHIATO.lavender, text: "Unresolved comments" })
+  rows.push({
+    color: getUnresolvedReviewThreadCountColor(detail.unresolvedReviewThreadCount),
+    text: formatUnresolvedReviewThreadCount(detail.unresolvedReviewThreadCount),
+  })
+
+  rows.push({ color: MACCHIATO.subtext0, text: "" })
   rows.push({ color: MACCHIATO.lavender, text: "Reviewers" })
   if (detail.reviewers.length === 0) {
     rows.push({ color: MACCHIATO.subtext0, text: "None" })
@@ -97,6 +104,17 @@ function createPullRequestMetadataRows(detail: PullRequestDetail, width: number)
   }
 
   return rows
+}
+
+function formatUnresolvedReviewThreadCount(count: number | undefined) {
+  return count === undefined ? "Unavailable" : pluralize(count, "comment")
+}
+
+function getUnresolvedReviewThreadCountColor(count: number | undefined) {
+  if (count === undefined) {
+    return MACCHIATO.subtext0
+  }
+  return count > 0 ? MACCHIATO.yellow : MACCHIATO.green
 }
 
 function getReviewerStateColor(state: string) {

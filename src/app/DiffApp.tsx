@@ -16,6 +16,10 @@ import type { PullRequestSummary } from "../features/pull-requests/model/types"
 import { PullRequestPane } from "../features/pull-requests/ui/PullRequestPane"
 import { openGitRepository } from "../features/repositories/model/repositories"
 import type { RepositoryView } from "../features/repositories/model/types"
+import {
+  getPersistableWorkspacePaths,
+  saveWorkspacePaths,
+} from "../features/repositories/model/workspaces"
 import { RepositorySidebar } from "../features/repository-sidebar/ui/RepositorySidebar"
 import {
   copyTextToClipboard,
@@ -34,16 +38,19 @@ const STATUS_OVERLAY_DISMISS_MS = 5000
 
 export function DiffApp({
   initialRepositories,
+  persistWorkspaces,
   staged,
   theme,
 }: {
   initialRepositories: RepositoryView[]
+  persistWorkspaces: boolean
   staged: boolean
   theme: HunkDiffThemeName
 }) {
   const renderer = useRenderer()
   const terminal = useTerminalDimensions()
   const pullRequestLoadIds = useRef(new Set<string>())
+  const lastSavedWorkspacePathKey = useRef<string | undefined>(undefined)
   const [repositories, setRepositories] = useState<RepositoryView[]>(initialRepositories)
   const firstRepository = repositories[0]
   const [activePane, setActivePane] = useState<ActivePane>(() => ({
@@ -85,6 +92,10 @@ export function DiffApp({
   const pathSuggestions = useMemo(() => createPathSuggestions(repositoryPathInput), [repositoryPathInput])
   const normalizedPathSuggestionIndex =
     pathSuggestions.length > 0 ? Math.min(selectedPathSuggestionIndex, pathSuggestions.length - 1) : 0
+
+  useEffect(() => {
+    persistWorkspaceRepositories(repositories)
+  }, [persistWorkspaces, repositories])
 
   useEffect(() => {
     for (const repository of repositories) {
@@ -313,7 +324,9 @@ export function DiffApp({
       return
     }
 
-    setRepositories((currentRepositories) => [...currentRepositories, nextRepository])
+    const nextRepositories = [...repositories, nextRepository]
+    setRepositories(nextRepositories)
+    persistWorkspaceRepositories(nextRepositories)
     setSelections((currentSelections) => ({
       ...currentSelections,
       [nextRepository.id]: defaultSelection(nextRepository.files),
@@ -340,6 +353,7 @@ export function DiffApp({
     const nextActiveRepository = nextRepositories[Math.min(closedRepositoryIndex, nextRepositories.length - 1)]
 
     setRepositories(nextRepositories)
+    persistWorkspaceRepositories(nextRepositories)
     setSelections((currentSelections) => {
       const nextSelections = { ...currentSelections }
       delete nextSelections[repositoryId]
@@ -374,6 +388,21 @@ export function DiffApp({
     }
   }
 
+  function persistWorkspaceRepositories(nextRepositories: RepositoryView[]) {
+    if (!persistWorkspaces) {
+      return
+    }
+
+    const workspacePaths = getPersistableWorkspacePaths(nextRepositories)
+    const workspacePathKey = workspacePaths.join("\0")
+    if (lastSavedWorkspacePathKey.current === workspacePathKey) {
+      return
+    }
+
+    lastSavedWorkspacePathKey.current = workspacePathKey
+    saveWorkspacePaths(workspacePaths)
+  }
+
   useKeyboard((key) => {
     const name = key.name?.toLowerCase() ?? ""
     const sequence = key.sequence?.toLowerCase()
@@ -406,6 +435,7 @@ export function DiffApp({
     }
 
     if (name === "escape" || name === "q" || sequence === "q") {
+      persistWorkspaceRepositories(repositories)
       renderer.destroy()
       return
     }
