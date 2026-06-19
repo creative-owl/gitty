@@ -13,11 +13,11 @@ const DEFAULT_THEME: HunkDiffThemeName = "catppuccin-macchiato"
 
 export function usage() {
   return `Usage:
-  bun run start -- [patch-file]
-  bun run start -- --repository ../repo-a --repository ../repo-b
-  bun run start -- --patch path/to/change.patch
-  bun run start -- --staged
-  git diff | bun run start
+  gitty [patch-file]
+  gitty --repository ../repo-a --repository ../repo-b
+  gitty --patch path/to/change.patch
+  gitty --staged
+  git diff | gitty
 
 Options:
   --patch <file>       Read a unified diff from a file.

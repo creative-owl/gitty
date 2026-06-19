@@ -1,8 +1,41 @@
 {
-  "name": "gitty",
-  "module": "src/index.tsx",
+  "name": "@c8o/gitty",
+  "version": "0.1.0",
+  "description": "A Bun + OpenTUI terminal diff viewer for repositories and pull requests.",
   "type": "module",
-  "private": true,
+  "module": "src/index.tsx",
+  "bin": {
+    "gitty": "./src/index.tsx"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/creative-owl/gitty.git"
+  },
+  "homepage": "https://github.com/creative-owl/gitty#readme",
+  "bugs": {
+    "url": "https://github.com/creative-owl/gitty/issues"
+  },
+  "keywords": [
+    "bun",
+    "diff",
+    "git",
+    "github",
+    "pull-request",
+    "terminal",
+    "tui"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "packageManager": "bun@1.3.14",
   "scripts": {
     "start": "bun run src/index.tsx",
     "dev": "bun --watch src/index.tsx",

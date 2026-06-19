@@ -1,32 +1,23 @@
 # Gitty
 
-A Bun + OpenTUI terminal diff viewer built with Hunk's reusable
-`hunkdiff/opentui` components.
+A Bun + OpenTUI terminal diff viewer built with [`hunkdiff/opentui`](https://www.npmjs.com/package/hunkdiff) components and inspired by [Hunk](https://github.com/modem-dev/hunk).
 
-## Setup
+## Local Development
 
 ```bash
 bun install
-```
-
-## Run
-
-```bash
 bun run start
 ```
 
-With no input, Gitty shows the current `git diff` plus untracked files when
-changes exist. If the repo is clean, the repository opens with an empty Working
-changes view.
+With no input, Gitty shows the current `git diff` plus untracked files when changes exist. If the repo is clean, the repository opens with an empty Working changes view.
 
-You can add multiple git repositories, pass a patch file, read from stdin,
-or view staged changes:
+You can add multiple git repositories, pass a patch file, read from stdin, or view staged changes:
 
 ```bash
-bun run start -- path/to/change.patch
-bun run start -- --repository ../repo-a --repository ../repo-b
-git diff | bun run start
-bun run diff:staged
+gitty path/to/change.patch
+gitty --repository ../repo-a --repository ../repo-b
+git diff | gitty
+gitty --staged
 ```
 
 Inside the TUI:
@@ -35,23 +26,21 @@ Inside the TUI:
 - In the open repository dialog, use `Up`/`Down` to pick a directory and `Tab` to complete it.
 - `Tab` cycles repositories.
 - Click any repository in the sidebar to switch to it.
-- Click a PR in the sidebar to open its description and comment chain. Click the PR URL in the detail header to open it in your browser.
+- Click a PR in the sidebar to open its description. Click the PR URL in the detail header to open it in your browser.
 - Click the `x` beside a repository in the sidebar to close it.
 - Line wrapping is always on.
 - Status messages appear in a bottom-right overlay so command controls stay visible.
 - The left sidebar lists repositories, each with a `Working changes` menu item.
-- For GitHub repositories, the sidebar also lists open PRs split into `Opened by you` and `Needs review`, with check status dots and changes-requested notices. PR detail views render a prominent plain title, the description as Markdown in its own block, right-aligned comment blocks, and reviewers, assignees, and labels in a right sidebar.
+- For GitHub repositories, the sidebar also lists open PRs split into `Your pr's` and `Needs your review`, with merge readiness dots and changes-requested notices. PR detail views render a prominent plain title, the description as Markdown in its own block, and reviewers, assignees, labels, and unresolved comment count in a right sidebar.
 - The git diff UI lives inside a swappable pane and always renders split diffs.
 - `q`, `Esc`, or `Ctrl+C` exits.
 
-Gitty defaults to Catppuccin Macchiato for the app shell and Hunk diff theme.
-You can still pass `--theme <name>` to try another Hunk theme.
+Gitty defaults to Catppuccin Macchiato for the app shell and Hunk diff theme. You can still pass `--theme <name>` to try another Hunk theme.
 
 ## Notes
 
-This app uses `hunkdiff/opentui`, which declares OpenTUI and React as peer
-dependencies. The installed OpenTUI package versions are aligned to Hunk's
-current peer range.
+This app uses [`hunkdiff/opentui`](https://www.npmjs.com/package/hunkdiff), which declares OpenTUI and React as peer dependencies. The installed OpenTUI package versions are aligned to Hunk's current peer range.
 
-PR sections use the GitHub CLI when available. Run `gh auth login` if the
-sidebar reports that PRs are unavailable.
+Gitty takes inspiration from [Hunk](https://github.com/modem-dev/hunk), the terminal diff review tool that publishes the reusable `hunkdiff` components.
+
+PR sections use the GitHub CLI when available. Run `gh auth login` if the sidebar reports that PRs are unavailable.
