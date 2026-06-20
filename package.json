@@ -41,6 +41,8 @@
     "dev": "bun --watch src/index.tsx",
     "diff": "bun run src/index.tsx",
     "diff:staged": "bun run src/index.tsx --staged",
+    "test": "bun test",
+    "check": "bun run typecheck && bun test",
     "typecheck": "bunx tsc --noEmit"
   },
   "devDependencies": {
