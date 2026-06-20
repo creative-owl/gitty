@@ -1,0 +1,33 @@
+name: Documentation issue
+description: Report missing, incorrect, or unclear Gitty documentation.
+title: "[Docs]: "
+body:
+  - type: textarea
+    id: location
+    attributes:
+      label: Documentation location
+      description: Link to the page or name the section that needs work.
+      placeholder: README.md, CONTRIBUTING.md, CLI help output, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is confusing or incorrect?
+      description: Describe the missing, stale, or unclear information.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested change
+      description: If you know what the docs should say, include the proposed wording or outline.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for duplicates.
+          required: true
