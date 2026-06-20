@@ -19,6 +19,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: create-release-pr
+  cancel-in-progress: true
+
 jobs:
   checks:
     name: Bun checks
