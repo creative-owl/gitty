@@ -1,5 +1,5 @@
 import { fitText } from "../../../shared/lib/text"
-import { MACCHIATO } from "../../../shared/theme"
+import { useAppTheme } from "../../../shared/theme"
 import { OPEN_REPOSITORY_SUGGESTION_ROWS, type PathSuggestion } from "../model/pathSuggestions"
 
 export function OpenRepositoryPrompt({
@@ -21,6 +21,7 @@ export function OpenRepositoryPrompt({
   value: string
   width: number
 }) {
+  const theme = useAppTheme()
   const contentWidth = Math.max(1, width - 4)
   const emptyRows = Math.max(0, OPEN_REPOSITORY_SUGGESTION_ROWS - suggestions.length)
   const handleSubmit = (submittedValue: unknown) => {
@@ -37,8 +38,8 @@ export function OpenRepositoryPrompt({
         height: 4 + OPEN_REPOSITORY_SUGGESTION_ROWS,
         border: true,
         borderStyle: "rounded",
-        borderColor: message ? MACCHIATO.red : MACCHIATO.surface2,
-        backgroundColor: MACCHIATO.mantle,
+        borderColor: message ? theme.red : theme.surface2,
+        backgroundColor: theme.mantle,
         flexDirection: "column",
         paddingLeft: 1,
         paddingRight: 1,
@@ -52,11 +53,11 @@ export function OpenRepositoryPrompt({
         onSubmit={handleSubmit}
         style={{
           width: "100%",
-          backgroundColor: MACCHIATO.base,
+          backgroundColor: theme.base,
         }}
       />
       <box style={{ width: "100%", height: 1 }}>
-        <text fg={message ? MACCHIATO.red : MACCHIATO.subtext0}>
+        <text fg={message ? theme.red : theme.subtext0}>
           {fitText(message ?? "Tab completes selected, Enter opens.", contentWidth)}
         </text>
       </box>
@@ -70,11 +71,11 @@ export function OpenRepositoryPrompt({
             style={{
               width: "100%",
               height: 1,
-              backgroundColor: selected ? MACCHIATO.surface0 : MACCHIATO.mantle,
+              backgroundColor: selected ? theme.surface0 : theme.mantle,
             }}
             onMouseUp={() => onCompleteSuggestion(suggestion.value)}
           >
-            <text fg={selected ? MACCHIATO.mauve : MACCHIATO.text}>{fitText(label, contentWidth)}</text>
+            <text fg={selected ? theme.mauve : theme.text}>{fitText(label, contentWidth)}</text>
           </box>
         )
       })}

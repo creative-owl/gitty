@@ -1,7 +1,7 @@
 import type { MouseEvent } from "@opentui/core"
 import type { ActivePane } from "../../../app/model/types"
 import { fitText, pluralize } from "../../../shared/lib/text"
-import { MACCHIATO } from "../../../shared/theme"
+import { useAppTheme } from "../../../shared/theme"
 import {
   createPullRequestSidebarRows,
   PULL_REQUEST_STATUS_WIDTH,
@@ -30,6 +30,7 @@ export function RepositorySidebar({
   width: number
   repositories: RepositoryView[]
 }) {
+  const theme = useAppTheme()
   const contentWidth = Math.max(1, width - 2)
 
   return (
@@ -40,8 +41,8 @@ export function RepositorySidebar({
         height: "100%",
         border: true,
         borderStyle: "rounded",
-        borderColor: MACCHIATO.surface2,
-        backgroundColor: MACCHIATO.mantle,
+        borderColor: theme.surface2,
+        backgroundColor: theme.mantle,
       }}
     >
       <scrollbox style={{ width: "100%", height: "100%" }} scrollY>
@@ -50,18 +51,18 @@ export function RepositorySidebar({
             style={{
               width: "100%",
               height: 1,
-              backgroundColor: MACCHIATO.surface0,
+              backgroundColor: theme.surface0,
             }}
             onMouseUp={onOpenRepository}
           >
-            <text fg={MACCHIATO.mauve}>{fitText("+ Open repository", contentWidth)}</text>
+            <text fg={theme.mauve}>{fitText("+ Open repository", contentWidth)}</text>
           </box>
           <box style={{ width: "100%", height: 1 }} />
         </box>
         {repositories.map((repository) => {
           const active = repository.id === activeRepositoryId
           const workingChangesActive = active && activePane.kind === "working"
-          const pullRequestRows = createPullRequestSidebarRows(repository.pullRequests)
+          const pullRequestRows = createPullRequestSidebarRows(repository.pullRequests, theme)
           const selectRepository = () => onSelectWorkingChanges(repository.id)
           const closeRepository = (event: MouseEvent) => {
             event.preventDefault()
@@ -86,7 +87,7 @@ export function RepositorySidebar({
                 onMouseUp={selectRepository}
               >
                 <box style={{ width: nameWidth, height: 1 }} onMouseUp={selectRepository}>
-                  <text fg={active ? MACCHIATO.lavender : MACCHIATO.text}>
+                  <text fg={active ? theme.lavender : theme.text}>
                     {fitText(repository.name, nameWidth)}
                   </text>
                 </box>
@@ -94,23 +95,23 @@ export function RepositorySidebar({
                   style={{ width: REPOSITORY_CLOSE_CONTROL_WIDTH, height: 1 }}
                   onMouseUp={closeRepository}
                 >
-                  <text fg={MACCHIATO.red}>{fitText(" x", REPOSITORY_CLOSE_CONTROL_WIDTH)}</text>
+                  <text fg={theme.red}>{fitText(" x", REPOSITORY_CLOSE_CONTROL_WIDTH)}</text>
                 </box>
               </box>
               <box
                 style={{
                   width: "100%",
                   height: 1,
-                  backgroundColor: workingChangesActive ? MACCHIATO.surface0 : MACCHIATO.mantle,
+                  backgroundColor: workingChangesActive ? theme.surface0 : theme.mantle,
                 }}
                 onMouseUp={selectRepository}
               >
-                <text fg={workingChangesActive ? MACCHIATO.mauve : MACCHIATO.text}>
+                <text fg={workingChangesActive ? theme.mauve : theme.text}>
                   {fitText(`${workingChangesActive ? ">" : " "} Working changes`, contentWidth)}
                 </text>
               </box>
               <box style={{ width: "100%", height: 1 }} onMouseUp={selectRepository}>
-                <text fg={MACCHIATO.subtext0}>
+                <text fg={theme.subtext0}>
                   {fitText(
                     `  ${pluralize(repository.files.length, "file")} +${repository.stats.additions} -${repository.stats.deletions}`,
                     contentWidth,
@@ -124,7 +125,7 @@ export function RepositorySidebar({
                   activePane.pullRequestNumber === row.pullRequest?.number
                 const rightWidth = row.rightText ? Math.min(contentWidth, PULL_REQUEST_STATUS_WIDTH) : 0
                 const leftWidth = Math.max(1, contentWidth - rightWidth)
-                const rowColor = pullRequestActive ? MACCHIATO.mauve : row.color
+                const rowColor = pullRequestActive ? theme.mauve : row.color
                 const onMouseUp = row.pullRequest
                   ? (event: MouseEvent) => selectPullRequest(row.pullRequest as PullRequestSummary, event)
                   : selectRepository
@@ -136,7 +137,7 @@ export function RepositorySidebar({
                       width: "100%",
                       height: 1,
                       flexDirection: "row",
-                      backgroundColor: pullRequestActive ? MACCHIATO.surface0 : MACCHIATO.mantle,
+                      backgroundColor: pullRequestActive ? theme.surface0 : theme.mantle,
                     }}
                     onMouseUp={onMouseUp}
                   >

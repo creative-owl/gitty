@@ -1,7 +1,7 @@
 import type { MouseEvent } from "@opentui/core"
 import { MarkdownContent } from "../../markdown/ui/MarkdownContent"
 import { fitText, wrapText } from "../../../shared/lib/text"
-import { MACCHIATO } from "../../../shared/theme"
+import { useAppTheme } from "../../../shared/theme"
 import type { PullRequestDetail } from "../model/types"
 
 export function PullRequestTitleBlock({
@@ -13,6 +13,7 @@ export function PullRequestTitleBlock({
   onOpenUrl: (url: string) => void
   width: number
 }) {
+  const theme = useAppTheme()
   const contentWidth = Math.max(1, width - 4)
   const titleRows = wrapText(detail.title, contentWidth)
   const url = detail.url.trim()
@@ -28,7 +29,7 @@ export function PullRequestTitleBlock({
       style={{
         width: "100%",
         height,
-        backgroundColor: MACCHIATO.mantle,
+        backgroundColor: theme.mantle,
         flexDirection: "column",
         paddingLeft: 1,
         paddingRight: 1,
@@ -36,12 +37,12 @@ export function PullRequestTitleBlock({
     >
       {titleRows.map((row, index) => (
         <box key={`pull-request-title-row:${index}`} style={{ width: "100%", height: 1 }}>
-          <text fg={MACCHIATO.lavender}>{fitText(row, contentWidth)}</text>
+          <text fg={theme.lavender}>{fitText(row, contentWidth)}</text>
         </box>
       ))}
       {url ? (
-        <box style={{ width: "100%", height: 1, backgroundColor: MACCHIATO.surface0 }} onMouseUp={openUrl}>
-          <text fg={MACCHIATO.blue}>{fitText(url, contentWidth)}</text>
+        <box style={{ width: "100%", height: 1, backgroundColor: theme.surface0 }} onMouseUp={openUrl}>
+          <text fg={theme.blue}>{fitText(url, contentWidth)}</text>
         </box>
       ) : null}
     </box>
@@ -55,6 +56,7 @@ export function DescriptionMarkdownBlock({
   markdown: string
   width: number
 }) {
+  const theme = useAppTheme()
   const contentWidth = Math.max(1, width - 4)
 
   return (
@@ -64,8 +66,8 @@ export function DescriptionMarkdownBlock({
         width: "100%",
         border: true,
         borderStyle: "rounded",
-        borderColor: MACCHIATO.surface2,
-        backgroundColor: MACCHIATO.base,
+        borderColor: theme.surface2,
+        backgroundColor: theme.base,
         flexDirection: "column",
         paddingLeft: 1,
         paddingRight: 1,

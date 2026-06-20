@@ -1,4 +1,4 @@
-import { MACCHIATO } from "../../../shared/theme"
+import type { AppTheme } from "../../../shared/theme"
 import type { RepositoryView } from "../../repositories/model/types"
 import type { PullRequestCheckState, PullRequestSummary, RepositoryPullRequests } from "./types"
 
@@ -26,30 +26,33 @@ export function findPullRequestSummary(repository: RepositoryView, pullRequestNu
   )
 }
 
-export function createPullRequestSidebarRows(pullRequests: RepositoryPullRequests | undefined): PullRequestSidebarRow[] {
+export function createPullRequestSidebarRows(
+  pullRequests: RepositoryPullRequests | undefined,
+  theme: AppTheme,
+): PullRequestSidebarRow[] {
   if (!pullRequests) {
     return []
   }
 
   if (pullRequests.status === "loading") {
     return [
-      { color: MACCHIATO.lavender, text: "  Pull requests" },
-      { color: MACCHIATO.subtext0, text: "    Loading..." },
+      { color: theme.lavender, text: "  Pull requests" },
+      { color: theme.subtext0, text: "    Loading..." },
     ]
   }
 
   if (pullRequests.status === "unavailable") {
     return [
-      { color: MACCHIATO.lavender, text: "  Pull requests" },
-      { color: MACCHIATO.subtext0, text: `    ${pullRequests.message}` },
+      { color: theme.lavender, text: "  Pull requests" },
+      { color: theme.subtext0, text: `    ${pullRequests.message}` },
     ]
   }
 
   return [
-    { color: MACCHIATO.lavender, text: `  Your pr's (${pullRequests.openedByUser.length})` },
-    ...createPullRequestSectionRows(pullRequests.openedByUser, { needsYourReview: false }),
-    { color: MACCHIATO.lavender, text: `  Needs your review (${pullRequests.needsReview.length})` },
-    ...createPullRequestSectionRows(pullRequests.needsReview, { needsYourReview: true }),
+    { color: theme.lavender, text: `  Your pr's (${pullRequests.openedByUser.length})` },
+    ...createPullRequestSectionRows(pullRequests.openedByUser, { needsYourReview: false }, theme),
+    { color: theme.lavender, text: `  Needs your review (${pullRequests.needsReview.length})` },
+    ...createPullRequestSectionRows(pullRequests.needsReview, { needsYourReview: true }, theme),
   ]
 }
 
@@ -58,18 +61,19 @@ function createPullRequestSectionRows(
   options: {
     needsYourReview: boolean
   },
+  theme: AppTheme,
 ): PullRequestSidebarRow[] {
   if (pullRequests.length === 0) {
-    return [{ color: MACCHIATO.subtext0, text: "    None" }]
+    return [{ color: theme.subtext0, text: "    None" }]
   }
 
   const visiblePullRequests = pullRequests.slice(0, PULL_REQUEST_SECTION_LIMIT)
   const visiblePullRequestRows = visiblePullRequests.flatMap((pullRequest) => {
     const rows: PullRequestSidebarRow[] = [
       {
-        color: MACCHIATO.text,
+        color: theme.text,
         pullRequest,
-        rightColor: getPullRequestStatusDotColor(pullRequest, options),
+        rightColor: getPullRequestStatusDotColor(pullRequest, options, theme),
         rightText: PULL_REQUEST_STATUS_DOT,
         text: `    #${pullRequest.number} ${pullRequest.title}`,
       },
@@ -77,7 +81,7 @@ function createPullRequestSectionRows(
 
     if (pullRequest.hasChangesRequested) {
       rows.push({
-        color: MACCHIATO.yellow,
+        color: theme.yellow,
         pullRequest,
         text: "    Changes requested",
       })
@@ -93,7 +97,7 @@ function createPullRequestSectionRows(
 
   return [
     ...visiblePullRequestRows,
-    { color: MACCHIATO.subtext0, text: `    +${hiddenPullRequestCount} more` },
+    { color: theme.subtext0, text: `    +${hiddenPullRequestCount} more` },
   ]
 }
 
@@ -102,28 +106,29 @@ function getPullRequestStatusDotColor(
   options: {
     needsYourReview: boolean
   },
+  theme: AppTheme,
 ) {
   if (pullRequest.checkState === "failed") {
-    return MACCHIATO.red
+    return theme.red
   }
   if (pullRequest.checkState === "running") {
-    return MACCHIATO.yellow
+    return theme.yellow
   }
   if (options.needsYourReview) {
-    return MACCHIATO.yellow
+    return theme.yellow
   }
   if (pullRequest.reviewState === "changes_requested" || pullRequest.reviewState === "review_required") {
-    return MACCHIATO.yellow
+    return theme.yellow
   }
-  return MACCHIATO.green
+  return theme.green
 }
 
-export function getPullRequestCheckStateColor(checkState: PullRequestCheckState) {
+export function getPullRequestCheckStateColor(checkState: PullRequestCheckState, theme: AppTheme) {
   if (checkState === "failed") {
-    return MACCHIATO.red
+    return theme.red
   }
   if (checkState === "running") {
-    return MACCHIATO.yellow
+    return theme.yellow
   }
-  return MACCHIATO.green
+  return theme.green
 }

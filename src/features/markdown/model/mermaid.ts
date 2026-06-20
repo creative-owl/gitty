@@ -1,25 +1,10 @@
 import { pushWrappedRows, type TextRow } from "../../../shared/lib/text"
-import { MACCHIATO } from "../../../shared/theme"
+import type { AppTheme } from "../../../shared/theme"
 import type { MermaidDomWindow, MermaidRenderState, RgbColor, SvgBox, TerminalImageRow, TerminalImageRun } from "./types"
 
 export const MERMAID_MAX_TERMINAL_ROWS = 32
 const MERMAID_MAX_TERMINAL_WIDTH = 120
 const MERMAID_MIN_TERMINAL_WIDTH = 12
-export const MERMAID_RENDER_BACKGROUND = MACCHIATO.surface0
-const MERMAID_RENDER_PALETTE = [
-  MACCHIATO.base,
-  MACCHIATO.mantle,
-  MACCHIATO.surface0,
-  MACCHIATO.surface2,
-  MACCHIATO.subtext0,
-  MACCHIATO.text,
-  MACCHIATO.blue,
-  MACCHIATO.green,
-  MACCHIATO.lavender,
-  MACCHIATO.mauve,
-  MACCHIATO.red,
-  MACCHIATO.yellow,
-] as const
 
 let mermaidDomReady = false
 let mermaidModulePromise: Promise<typeof import("mermaid")["default"]> | undefined
@@ -27,16 +12,17 @@ let mermaidRenderCounter = 0
 let mermaidRenderQueue: Promise<void> = Promise.resolve()
 
 const nearestMermaidColorCache = new Map<string, string>()
-const mermaidPaletteRgb = MERMAID_RENDER_PALETTE.map((color) => ({
-  color,
-  rgb: hexToRgb(color),
-}))
+const mermaidPaletteRgbByTheme = new Map<string, { color: string; rgb: RgbColor }[]>()
 
-export async function createMermaidRenderState(code: string, width: number): Promise<MermaidRenderState> {
+export function getMermaidRenderBackground(theme: AppTheme) {
+  return theme.surface0
+}
+
+export async function createMermaidRenderState(code: string, width: number, theme: AppTheme): Promise<MermaidRenderState> {
   const firstLine = getMermaidFirstLine(code)
   try {
-    const svg = await renderMermaidSvg(code)
-    const rows = await renderMermaidSvgToTerminalRows(svg, width)
+    const svg = await renderMermaidSvg(code, theme)
+    const rows = await renderMermaidSvgToTerminalRows(svg, width, theme)
     if (rows.length === 0) {
       throw new Error("Mermaid returned an empty diagram.")
     }
@@ -46,7 +32,7 @@ export async function createMermaidRenderState(code: string, width: number): Pro
     const message = error instanceof Error ? error.message : "Unable to render Mermaid diagram."
     return {
       message,
-      sourceRows: createMermaidSourceRows(code, firstLine, width, message),
+      sourceRows: createMermaidSourceRows(code, firstLine, width, message, theme),
       status: "error",
     }
   }
@@ -60,9 +46,9 @@ function getMermaidFirstLine(code: string) {
     ?.trim() ?? ""
 }
 
-async function renderMermaidSvg(code: string) {
+async function renderMermaidSvg(code: string, theme: AppTheme) {
   const renderTask = mermaidRenderQueue.then(async () => {
-    const mermaid = await getMermaidRenderer()
+    const mermaid = await getMermaidRenderer(theme)
     const id = `gitty-mermaid-${hashString(code)}-${mermaidRenderCounter++}`
     const { svg } = await mermaid.render(id, code)
     if (!svg.trim()) {
@@ -79,34 +65,65 @@ async function renderMermaidSvg(code: string) {
   return renderTask
 }
 
-async function getMermaidRenderer() {
+async function getMermaidRenderer(theme: AppTheme) {
   await ensureMermaidDom()
-  mermaidModulePromise ??= import("mermaid").then(({ default: mermaid }) => {
-    mermaid.initialize({
-      deterministicIds: true,
-      flowchart: { htmlLabels: false },
+  mermaidModulePromise ??= import("mermaid").then(({ default: mermaid }) => mermaid)
+  const mermaid = await mermaidModulePromise
+
+  mermaid.initialize({
+    deterministicIds: true,
+    flowchart: { htmlLabels: false },
+    fontFamily: "monospace",
+    securityLevel: "strict",
+    startOnLoad: false,
+    theme: "base",
+    themeVariables: {
+      background: getMermaidRenderBackground(theme),
+      edgeLabelBackground: theme.surface0,
       fontFamily: "monospace",
-      securityLevel: "strict",
-      startOnLoad: false,
-      theme: "base",
-      themeVariables: {
-        background: MERMAID_RENDER_BACKGROUND,
-        edgeLabelBackground: MACCHIATO.surface0,
-        fontFamily: "monospace",
-        lineColor: MACCHIATO.subtext0,
-        mainBkg: MACCHIATO.surface2,
-        nodeBorder: MACCHIATO.mauve,
-        primaryBorderColor: MACCHIATO.mauve,
-        primaryColor: MACCHIATO.surface0,
-        primaryTextColor: MACCHIATO.text,
-        secondaryColor: MACCHIATO.base,
-        tertiaryColor: MACCHIATO.mantle,
-      },
-    })
-    return mermaid
+      lineColor: theme.subtext0,
+      mainBkg: theme.surface2,
+      nodeBorder: theme.mauve,
+      primaryBorderColor: theme.mauve,
+      primaryColor: theme.surface0,
+      primaryTextColor: theme.text,
+      secondaryColor: theme.base,
+      tertiaryColor: theme.mantle,
+    },
   })
 
-  return mermaidModulePromise
+  return mermaid
+}
+
+function createMermaidRenderPalette(theme: AppTheme) {
+  return [
+    theme.base,
+    theme.mantle,
+    theme.surface0,
+    theme.surface2,
+    theme.subtext0,
+    theme.text,
+    theme.blue,
+    theme.green,
+    theme.lavender,
+    theme.mauve,
+    theme.red,
+    theme.yellow,
+  ] as const
+}
+
+function getMermaidPaletteRgb(theme: AppTheme) {
+  const cached = mermaidPaletteRgbByTheme.get(theme.id)
+  if (cached) {
+    return cached
+  }
+
+  const palette = createMermaidRenderPalette(theme).map((color) => ({
+    color,
+    rgb: hexToRgb(color),
+  }))
+  mermaidPaletteRgbByTheme.set(theme.id, palette)
+  return palette
 }
 
 async function ensureMermaidDom() {
@@ -270,8 +287,9 @@ function readSvgNumber(element: Element, name: string, fallback = 0) {
   return Number.isFinite(value) ? value : fallback
 }
 
-async function renderMermaidSvgToTerminalRows(svg: string, width: number) {
+async function renderMermaidSvgToTerminalRows(svg: string, width: number, theme: AppTheme) {
   const sharp = (await import("sharp")).default
+  const background = getMermaidRenderBackground(theme)
   const targetWidth = Math.max(MERMAID_MIN_TERMINAL_WIDTH, Math.min(width, MERMAID_MAX_TERMINAL_WIDTH))
   const maxPixelHeight = MERMAID_MAX_TERMINAL_ROWS * 2
   const { data, info } = await sharp(Buffer.from(svg))
@@ -281,32 +299,40 @@ async function renderMermaidSvgToTerminalRows(svg: string, width: number) {
       width: targetWidth,
       withoutEnlargement: false,
     })
-    .flatten({ background: MERMAID_RENDER_BACKGROUND })
+    .flatten({ background })
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true })
 
-  return createTerminalImageRows(data, info.width, info.height, info.channels, width)
+  return createTerminalImageRows(data, info.width, info.height, info.channels, width, theme)
 }
 
-function createTerminalImageRows(data: Buffer, imageWidth: number, imageHeight: number, channels: number, renderWidth: number) {
+function createTerminalImageRows(
+  data: Buffer,
+  imageWidth: number,
+  imageHeight: number,
+  channels: number,
+  renderWidth: number,
+  theme: AppTheme,
+) {
   const rows: TerminalImageRow[] = []
+  const background = getMermaidRenderBackground(theme)
   const leftPadding = Math.max(0, Math.floor((renderWidth - imageWidth) / 2))
   const rightPadding = Math.max(0, renderWidth - imageWidth - leftPadding)
 
   for (let y = 0; y < imageHeight; y += 2) {
     const runs: TerminalImageRun[] = []
-    pushTerminalImageRun(runs, MERMAID_RENDER_BACKGROUND, MERMAID_RENDER_BACKGROUND, " ".repeat(leftPadding))
+    pushTerminalImageRun(runs, background, background, " ".repeat(leftPadding))
 
     for (let x = 0; x < imageWidth; x += 1) {
-      const topColor = readTerminalPixelColor(data, imageWidth, imageHeight, channels, x, y)
+      const topColor = readTerminalPixelColor(data, imageWidth, imageHeight, channels, x, y, theme)
       const bottomColor =
-        y + 1 < imageHeight ? readTerminalPixelColor(data, imageWidth, imageHeight, channels, x, y + 1) : MERMAID_RENDER_BACKGROUND
-      const glyph = topColor === MERMAID_RENDER_BACKGROUND && bottomColor === MERMAID_RENDER_BACKGROUND ? " " : "▀"
+        y + 1 < imageHeight ? readTerminalPixelColor(data, imageWidth, imageHeight, channels, x, y + 1, theme) : background
+      const glyph = topColor === background && bottomColor === background ? " " : "▀"
       pushTerminalImageRun(runs, topColor, bottomColor, glyph)
     }
 
-    pushTerminalImageRun(runs, MERMAID_RENDER_BACKGROUND, MERMAID_RENDER_BACKGROUND, " ".repeat(rightPadding))
+    pushTerminalImageRun(runs, background, background, " ".repeat(rightPadding))
     rows.push({ runs })
   }
 
@@ -327,37 +353,46 @@ function pushTerminalImageRun(runs: TerminalImageRun[], color: string, backgroun
   runs.push({ backgroundColor, color, text })
 }
 
-function readTerminalPixelColor(data: Buffer, imageWidth: number, imageHeight: number, channels: number, x: number, y: number) {
+function readTerminalPixelColor(
+  data: Buffer,
+  imageWidth: number,
+  imageHeight: number,
+  channels: number,
+  x: number,
+  y: number,
+  theme: AppTheme,
+) {
+  const backgroundColor = getMermaidRenderBackground(theme)
   if (x < 0 || y < 0 || x >= imageWidth || y >= imageHeight) {
-    return MERMAID_RENDER_BACKGROUND
+    return backgroundColor
   }
 
   const offset = (y * imageWidth + x) * channels
   const alpha = channels > 3 ? (data[offset + 3] ?? 255) / 255 : 1
-  const background = hexToRgb(MERMAID_RENDER_BACKGROUND)
+  const background = hexToRgb(backgroundColor)
   const color = {
     b: blendChannel(data[offset + 2] ?? background.b, background.b, alpha),
     g: blendChannel(data[offset + 1] ?? background.g, background.g, alpha),
     r: blendChannel(data[offset] ?? background.r, background.r, alpha),
   }
 
-  return findNearestMermaidColor(color)
+  return findNearestMermaidColor(color, theme)
 }
 
 function blendChannel(value: number, background: number, alpha: number) {
   return Math.round(value * alpha + background * (1 - alpha))
 }
 
-function findNearestMermaidColor(color: RgbColor) {
-  const cacheKey = `${color.r},${color.g},${color.b}`
+function findNearestMermaidColor(color: RgbColor, theme: AppTheme) {
+  const cacheKey = `${theme.id}:${color.r},${color.g},${color.b}`
   const cached = nearestMermaidColorCache.get(cacheKey)
   if (cached) {
     return cached
   }
 
-  let nearest: string = MERMAID_RENDER_BACKGROUND
+  let nearest = getMermaidRenderBackground(theme)
   let nearestDistance = Number.POSITIVE_INFINITY
-  for (const entry of mermaidPaletteRgb) {
+  for (const entry of getMermaidPaletteRgb(theme)) {
     const distance = (color.r - entry.rgb.r) ** 2 + (color.g - entry.rgb.g) ** 2 + (color.b - entry.rgb.b) ** 2
     if (distance < nearestDistance) {
       nearest = entry.color
@@ -378,18 +413,25 @@ function hexToRgb(color: string): RgbColor {
   }
 }
 
-function createMermaidSourceRows(code: string, firstLine: string, width: number, message: string): TextRow[] {
+function createMermaidSourceRows(
+  code: string,
+  firstLine: string,
+  width: number,
+  message: string,
+  theme: AppTheme,
+): TextRow[] {
+  const background = getMermaidRenderBackground(theme)
   const rows: TextRow[] = [
-    { backgroundColor: MERMAID_RENDER_BACKGROUND, color: MACCHIATO.mauve, text: formatMermaidTitle(firstLine) },
+    { backgroundColor: background, color: theme.mauve, text: formatMermaidTitle(firstLine) },
     {
-      backgroundColor: MERMAID_RENDER_BACKGROUND,
-      color: MACCHIATO.yellow,
+      backgroundColor: background,
+      color: theme.yellow,
       text: message,
     },
   ]
 
   for (const line of code.replace(/\r\n/g, "\n").split("\n")) {
-    pushWrappedRows(rows, line || " ", width, MACCHIATO.text, MERMAID_RENDER_BACKGROUND)
+    pushWrappedRows(rows, line || " ", width, theme.text, background)
   }
 
   return rows

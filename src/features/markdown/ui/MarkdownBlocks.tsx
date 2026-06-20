@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { fitText } from "../../../shared/lib/text"
-import { MACCHIATO } from "../../../shared/theme"
-import { GITHUB_ALERTS } from "../model/constants"
+import { useAppTheme } from "../../../shared/theme"
+import { getGithubAlert } from "../model/constants"
 import type { MarkdownRenderBlock } from "../model/types"
 import { MarkdownContent } from "./MarkdownContent"
 
@@ -14,7 +14,8 @@ export function GithubAlertMarkdownBlock({
   blockKeyPrefix: string
   width: number
 }) {
-  const alert = GITHUB_ALERTS[block.alertType]
+  const theme = useAppTheme()
+  const alert = getGithubAlert(theme, block.alertType)
   const contentWidth = Math.max(1, width - 4)
 
   return (
@@ -25,7 +26,7 @@ export function GithubAlertMarkdownBlock({
         border: true,
         borderStyle: "rounded",
         borderColor: alert.color,
-        backgroundColor: MACCHIATO.surface0,
+        backgroundColor: theme.surface0,
         flexDirection: "column",
         marginBottom: 1,
         paddingLeft: 1,
@@ -33,7 +34,7 @@ export function GithubAlertMarkdownBlock({
       }}
     >
       <MarkdownContent
-        backgroundColor={MACCHIATO.surface0}
+        backgroundColor={theme.surface0}
         blockKeyPrefix={`${blockKeyPrefix}:body`}
         emptyText="No alert content."
         markdown={block.content}
@@ -52,6 +53,7 @@ export function QuoteMarkdownBlock({
   blockKeyPrefix: string
   width: number
 }) {
+  const theme = useAppTheme()
   const contentWidth = Math.max(1, width - 4)
 
   return (
@@ -61,8 +63,8 @@ export function QuoteMarkdownBlock({
         width: "100%",
         border: true,
         borderStyle: "rounded",
-        borderColor: MACCHIATO.surface2,
-        backgroundColor: MACCHIATO.surface0,
+        borderColor: theme.surface2,
+        backgroundColor: theme.surface0,
         flexDirection: "column",
         marginBottom: 1,
         paddingLeft: 1,
@@ -70,7 +72,7 @@ export function QuoteMarkdownBlock({
       }}
     >
       <MarkdownContent
-        backgroundColor={MACCHIATO.surface0}
+        backgroundColor={theme.surface0}
         blockKeyPrefix={`${blockKeyPrefix}:body`}
         emptyText="No quote content."
         markdown={block.content}
@@ -89,6 +91,7 @@ export function DetailsMarkdownBlock({
   blockKeyPrefix: string
   width: number
 }) {
+  const theme = useAppTheme()
   const contentWidth = Math.max(1, width - 4)
   const [isOpen, setOpen] = useState(block.open)
 
@@ -103,8 +106,8 @@ export function DetailsMarkdownBlock({
         width: "100%",
         border: true,
         borderStyle: "rounded",
-        borderColor: MACCHIATO.surface2,
-        backgroundColor: MACCHIATO.surface0,
+        borderColor: theme.surface2,
+        backgroundColor: theme.surface0,
         flexDirection: "column",
         marginBottom: 1,
         paddingLeft: 1,
@@ -112,14 +115,14 @@ export function DetailsMarkdownBlock({
       }}
     >
       <box
-        style={{ width: "100%", height: 1, backgroundColor: MACCHIATO.surface0 }}
+        style={{ width: "100%", height: 1, backgroundColor: theme.surface0 }}
         onMouseUp={() => setOpen((current) => !current)}
       >
-        <text fg={MACCHIATO.mauve}>{fitText(`${isOpen ? "v" : ">"} ${block.summary}`, contentWidth)}</text>
+        <text fg={theme.mauve}>{fitText(`${isOpen ? "v" : ">"} ${block.summary}`, contentWidth)}</text>
       </box>
       {isOpen ? (
         <MarkdownContent
-          backgroundColor={MACCHIATO.surface0}
+          backgroundColor={theme.surface0}
           blockKeyPrefix={`${blockKeyPrefix}:body`}
           emptyText="No details."
           markdown={block.body}

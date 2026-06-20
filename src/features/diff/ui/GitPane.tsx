@@ -1,6 +1,6 @@
 import { HunkReviewStream, type HunkDiffSelection, type HunkDiffThemeName } from "hunkdiff/opentui"
 import { fitText } from "../../../shared/lib/text"
-import { MACCHIATO } from "../../../shared/theme"
+import { useAppTheme } from "../../../shared/theme"
 import type { RepositoryView } from "../../repositories/model/types"
 
 export function GitPane({
@@ -16,6 +16,7 @@ export function GitPane({
   width: number
   repository?: RepositoryView
 }) {
+  const appTheme = useAppTheme()
   const files = repository?.files ?? []
   const paneContentWidth = Math.max(1, width - 4)
 
@@ -26,8 +27,8 @@ export function GitPane({
         height: "100%",
         border: true,
         borderStyle: "rounded",
-        borderColor: MACCHIATO.surface2,
-        backgroundColor: MACCHIATO.mantle,
+        borderColor: appTheme.surface2,
+        backgroundColor: appTheme.mantle,
         flexDirection: "column",
         paddingLeft: 1,
         paddingRight: 1,
@@ -48,7 +49,7 @@ export function GitPane({
         </scrollbox>
       ) : (
         <box style={{ width: "100%", height: 3, paddingLeft: 1, paddingTop: 1 }}>
-          <text fg={MACCHIATO.subtext0}>
+          <text fg={appTheme.subtext0}>
             {fitText(
               repository ? "No working changes in this repository." : "No repository open.",
               Math.max(1, paneContentWidth - 2),

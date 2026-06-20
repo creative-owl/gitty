@@ -1,6 +1,7 @@
+import { useMemo } from "react"
 import { fitText } from "../../../shared/lib/text"
-import { MACCHIATO } from "../../../shared/theme"
-import { MARKDOWN_LIST_INDENT_WIDTH, MARKDOWN_SYNTAX_STYLE, MARKDOWN_TABLE_OPTIONS } from "../model/constants"
+import { type AppTheme, useAppTheme } from "../../../shared/theme"
+import { createMarkdownSyntaxStyle, createMarkdownTableOptions, MARKDOWN_LIST_INDENT_WIDTH } from "../model/constants"
 import type { MarkdownListBlock, MarkdownListItem } from "../model/types"
 
 export function MarkdownListBlockView({
@@ -16,6 +17,7 @@ export function MarkdownListBlockView({
   depth?: number
   width: number
 }) {
+  const theme = useAppTheme()
   const markerWidth = getMarkdownListMarkerWidth(block)
 
   return (
@@ -39,6 +41,7 @@ export function MarkdownListBlockView({
             key={`${blockKeyPrefix}:${index}`}
             marker={marker}
             markerWidth={markerWidth}
+            theme={theme}
             width={width}
           />
         )
@@ -54,6 +57,7 @@ function MarkdownListItemView({
   item,
   marker,
   markerWidth,
+  theme,
   width,
 }: {
   backgroundColor: string
@@ -62,8 +66,11 @@ function MarkdownListItemView({
   item: MarkdownListItem
   marker: string
   markerWidth: number
+  theme: AppTheme
   width: number
 }) {
+  const syntaxStyle = useMemo(() => createMarkdownSyntaxStyle(theme), [theme])
+  const tableOptions = useMemo(() => createMarkdownTableOptions(theme), [theme])
   const indentWidth = depth * MARKDOWN_LIST_INDENT_WIDTH
   const markerColumnWidth = Math.min(Math.max(1, indentWidth + markerWidth + 1), Math.max(1, width - 1))
   const contentWidth = Math.max(1, width - markerColumnWidth)
@@ -79,7 +86,7 @@ function MarkdownListItemView({
       }}
     >
       <text
-        fg={getMarkdownListMarkerColor(item)}
+        fg={getMarkdownListMarkerColor(item, theme)}
         bg={backgroundColor}
         style={{ width: markerColumnWidth, height: 1, flexShrink: 0 }}
       >
@@ -98,10 +105,10 @@ function MarkdownListItemView({
             bg={backgroundColor}
             conceal
             content={item.content}
-            fg={MACCHIATO.text}
+            fg={theme.text}
             internalBlockMode="coalesced"
-            syntaxStyle={MARKDOWN_SYNTAX_STYLE}
-            tableOptions={MARKDOWN_TABLE_OPTIONS}
+            syntaxStyle={syntaxStyle}
+            tableOptions={tableOptions}
             style={{
               width: "100%",
               flexShrink: 0,
@@ -144,10 +151,10 @@ function createMarkdownListMarker(block: MarkdownListBlock, item: MarkdownListIt
   return block.ordered ? `${block.start + index}.` : "-"
 }
 
-function getMarkdownListMarkerColor(item: MarkdownListItem) {
+function getMarkdownListMarkerColor(item: MarkdownListItem, theme: AppTheme) {
   if (!item.task) {
-    return MACCHIATO.subtext0
+    return theme.subtext0
   }
 
-  return item.checked ? MACCHIATO.green : MACCHIATO.yellow
+  return item.checked ? theme.green : theme.yellow
 }

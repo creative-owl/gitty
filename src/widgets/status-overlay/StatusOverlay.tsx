@@ -1,5 +1,5 @@
 import { fitText } from "../../shared/lib/text"
-import { MACCHIATO } from "../../shared/theme"
+import { useAppTheme } from "../../shared/theme"
 
 export type OpenRepositoryStatus = {
   text: string
@@ -15,6 +15,8 @@ export function StatusOverlay({
   status?: OpenRepositoryStatus
   width: number
 }) {
+  const theme = useAppTheme()
+
   if (!status) {
     return null
   }
@@ -36,13 +38,13 @@ export function StatusOverlay({
         height: 3,
         border: true,
         borderStyle: "rounded",
-        borderColor: MACCHIATO.green,
-        backgroundColor: MACCHIATO.mantle,
+        borderColor: theme.green,
+        backgroundColor: theme.mantle,
         paddingLeft: 1,
         paddingRight: 1,
       }}
     >
-      <text fg={MACCHIATO.green}>{fitText(status.text, contentWidth)}</text>
+      <text fg={theme.green}>{fitText(status.text, contentWidth)}</text>
     </box>
   )
 }

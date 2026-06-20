@@ -1,39 +1,45 @@
 import { SyntaxStyle } from "@opentui/core"
-import { MACCHIATO } from "../../../shared/theme"
+import type { AppTheme } from "../../../shared/theme"
 import type { GithubAlertType } from "./types"
 
-export const MARKDOWN_SYNTAX_STYLE = SyntaxStyle.fromStyles({
-  default: { fg: MACCHIATO.text },
-  conceal: { fg: MACCHIATO.surface2 },
-  markup: { fg: MACCHIATO.subtext0 },
-  "markup.heading": { bold: true, fg: MACCHIATO.mauve },
-  "markup.italic": { fg: MACCHIATO.text, italic: true },
-  "markup.link": { fg: MACCHIATO.blue, underline: true },
-  "markup.link.label": { fg: MACCHIATO.blue, underline: true },
-  "markup.link.url": { fg: MACCHIATO.subtext0 },
-  "markup.raw": { bg: MACCHIATO.surface0, fg: MACCHIATO.green },
-  "markup.strikethrough": { dim: true, fg: MACCHIATO.subtext0 },
-  "markup.strong": { bold: true, fg: MACCHIATO.lavender },
-})
+export function createMarkdownSyntaxStyle(theme: AppTheme) {
+  return SyntaxStyle.fromStyles({
+    default: { fg: theme.text },
+    conceal: { fg: theme.surface2 },
+    markup: { fg: theme.subtext0 },
+    "markup.heading": { bold: true, fg: theme.mauve },
+    "markup.italic": { fg: theme.text, italic: true },
+    "markup.link": { fg: theme.blue, underline: true },
+    "markup.link.label": { fg: theme.blue, underline: true },
+    "markup.link.url": { fg: theme.subtext0 },
+    "markup.raw": { bg: theme.surface0, fg: theme.green },
+    "markup.strikethrough": { dim: true, fg: theme.subtext0 },
+    "markup.strong": { bold: true, fg: theme.lavender },
+  })
+}
 
-export const MARKDOWN_TABLE_OPTIONS = {
-  borderColor: MACCHIATO.surface2,
-  borders: true,
-  borderStyle: "rounded",
-  cellPadding: 1,
-  outerBorder: true,
-  selectable: true,
-  style: "grid",
-  widthMode: "full",
-  wrapMode: "word",
-} as const
+export function createMarkdownTableOptions(theme: AppTheme) {
+  return {
+    borderColor: theme.surface2,
+    borders: true,
+    borderStyle: "rounded",
+    cellPadding: 1,
+    outerBorder: true,
+    selectable: true,
+    style: "grid",
+    widthMode: "full",
+    wrapMode: "word",
+  } as const
+}
 
 export const MARKDOWN_LIST_INDENT_WIDTH = 2
 
-export const GITHUB_ALERTS: Record<GithubAlertType, { color: string; title: string }> = {
-  caution: { color: MACCHIATO.red, title: "Caution" },
-  important: { color: MACCHIATO.mauve, title: "Important" },
-  note: { color: MACCHIATO.blue, title: "Note" },
-  tip: { color: MACCHIATO.green, title: "Tip" },
-  warning: { color: MACCHIATO.yellow, title: "Warning" },
+export function getGithubAlert(theme: AppTheme, type: GithubAlertType): { color: string; title: string } {
+  return {
+    caution: { color: theme.red, title: "Caution" },
+    important: { color: theme.mauve, title: "Important" },
+    note: { color: theme.blue, title: "Note" },
+    tip: { color: theme.green, title: "Tip" },
+    warning: { color: theme.yellow, title: "Warning" },
+  }[type]
 }

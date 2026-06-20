@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react"
-import { MACCHIATO } from "../../../shared/theme"
+import { useAppTheme } from "../../../shared/theme"
 import { TextRows } from "../../../shared/ui/TextRows"
 import {
   createMermaidRenderState,
+  getMermaidRenderBackground,
   MERMAID_MAX_TERMINAL_ROWS,
-  MERMAID_RENDER_BACKGROUND,
 } from "../model/mermaid"
 import type { MermaidRenderState, TerminalImageRow } from "../model/types"
 
@@ -15,14 +15,16 @@ export function MermaidDiagram({
   content: string
   width: number
 }) {
+  const theme = useAppTheme()
   const contentWidth = Math.max(1, width - 4)
+  const background = getMermaidRenderBackground(theme)
   const [renderState, setRenderState] = useState<MermaidRenderState>({ status: "loading" })
 
   useEffect(() => {
     let isCancelled = false
     setRenderState({ status: "loading" })
 
-    void createMermaidRenderState(content, contentWidth).then((nextState) => {
+    void createMermaidRenderState(content, contentWidth, theme).then((nextState) => {
       if (!isCancelled) {
         setRenderState(nextState)
       }
@@ -31,7 +33,7 @@ export function MermaidDiagram({
     return () => {
       isCancelled = true
     }
-  }, [content, contentWidth])
+  }, [content, contentWidth, theme])
 
   const height =
     renderState.status === "rendered"
@@ -39,7 +41,7 @@ export function MermaidDiagram({
       : renderState.status === "error"
         ? Math.min(renderState.sourceRows.length + 2, MERMAID_MAX_TERMINAL_ROWS + 6)
         : 4
-  const borderColor = renderState.status === "error" ? MACCHIATO.yellow : MACCHIATO.surface2
+  const borderColor = renderState.status === "error" ? theme.yellow : theme.surface2
 
   return (
     <box
@@ -50,7 +52,7 @@ export function MermaidDiagram({
         border: true,
         borderStyle: "rounded",
         borderColor,
-        backgroundColor: MERMAID_RENDER_BACKGROUND,
+        backgroundColor: background,
         flexDirection: "column",
         marginBottom: 1,
         paddingLeft: 1,
@@ -58,12 +60,17 @@ export function MermaidDiagram({
       }}
     >
       {renderState.status === "loading" ? (
-        <text fg={MACCHIATO.subtext0} bg={MERMAID_RENDER_BACKGROUND} style={{ width: contentWidth, height: 1 }}>
+        <text fg={theme.subtext0} bg={background} style={{ width: contentWidth, height: 1 }}>
           Rendering Mermaid diagram...
         </text>
       ) : null}
       {renderState.status === "rendered" ? (
-        <TerminalImageRows rowKeyPrefix="pull-request-mermaid-row" rows={renderState.rows} width={contentWidth} />
+        <TerminalImageRows
+          backgroundColor={background}
+          rowKeyPrefix="pull-request-mermaid-row"
+          rows={renderState.rows}
+          width={contentWidth}
+        />
       ) : null}
       {renderState.status === "error" ? (
         <>
@@ -75,10 +82,12 @@ export function MermaidDiagram({
 }
 
 function TerminalImageRows({
+  backgroundColor,
   rowKeyPrefix,
   rows,
   width,
 }: {
+  backgroundColor: string
   rowKeyPrefix: string
   rows: TerminalImageRow[]
   width: number
@@ -87,7 +96,7 @@ function TerminalImageRows({
     <>
       {rows.map((row, index) => (
         <text
-          bg={MERMAID_RENDER_BACKGROUND}
+          bg={backgroundColor}
           key={`${rowKeyPrefix}:${index}`}
           style={{ width, height: 1, flexShrink: 0 }}
         >
