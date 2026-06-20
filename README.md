@@ -1,3 +1,11 @@
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/gitty-cat-dark-mode.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./docs/assets/gitty-cat-light-mode.svg">
+    <img src="./docs/assets/gitty-cat-light-mode.svg" alt="Gitty cat icon" width="96" height="96">
+  </picture>
+</div>
+
 # Gitty
 
 A Bun + OpenTUI terminal diff viewer built with [`hunkdiff/opentui`](https://www.npmjs.com/package/hunkdiff) components and inspired by [Hunk](https://github.com/modem-dev/hunk).
@@ -44,3 +52,7 @@ This app uses [`hunkdiff/opentui`](https://www.npmjs.com/package/hunkdiff), whic
 Gitty takes inspiration from [Hunk](https://github.com/modem-dev/hunk), the terminal diff review tool that publishes the reusable `hunkdiff` components.
 
 PR sections use the GitHub CLI when available. Run `gh auth login` if the sidebar reports that PRs are unavailable.
+
+## Attribution
+
+Cat icon created by Dan Hetteix from [The Noun Project](https://thenounproject.com/).
