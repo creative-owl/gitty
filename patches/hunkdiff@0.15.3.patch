@@ -1,0 +1,193 @@
+diff --git a/dist/npm/opentui/index.d.ts b/dist/npm/opentui/index.d.ts
+index 84805c936b196b5a4f90d715fdae9d89e163008f..61d9a4a473592c8348822ed0320c23cb0d71270e 100644
+--- a/dist/npm/opentui/index.d.ts
++++ b/dist/npm/opentui/index.d.ts
+@@ -1,5 +1,5 @@
+ export { parseDiffFromFile, parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
+-export { HUNK_DIFF_THEME_NAMES, type HunkDiffThemeName } from "./themes";
++export { HUNK_DIFF_THEME_NAMES, createHunkDiffTheme, type HunkDiffCustomTheme, type HunkDiffSyntaxColors, type HunkDiffTheme, type HunkDiffThemeAppearance, type HunkDiffThemeInput, type HunkDiffThemeName, } from "./themes";
+ export { HunkDiffBody } from "./HunkDiffBody";
+ export { HunkDiffFileHeader } from "./HunkDiffFileHeader";
+ export { HunkDiffView } from "./HunkDiffView";
+diff --git a/dist/npm/opentui/index.js b/dist/npm/opentui/index.js
+index d5e6d752e905721b2182676fb7e6f5958c2d7bd3..f1bc3e6262565de5402da4dc5024aac6d9454394 100644
+--- a/dist/npm/opentui/index.js
++++ b/dist/npm/opentui/index.js
+@@ -963,8 +963,9 @@ function buildCustomTheme(customTheme) {
+   const baseTheme = builtInThemeById(customTheme.base) ?? fallbackTheme();
+   const themeBase = {
+     ...baseTheme,
+-    id: "custom",
++    id: customTheme.id ?? "custom",
+     label: customTheme.label ?? "Custom",
++    appearance: customTheme.appearance ?? baseTheme.appearance,
+     background: customTheme.background ?? baseTheme.background,
+     panel: customTheme.panel ?? baseTheme.panel,
+     panelAlt: customTheme.panelAlt ?? baseTheme.panelAlt,
+@@ -1004,7 +1005,13 @@ function buildCustomTheme(customTheme) {
+     ...customTheme.syntax
+   });
+ }
++function createHunkDiffTheme(customTheme) {
++  return buildCustomTheme(customTheme);
++}
+ function resolveTheme(requested, themeMode, customTheme) {
++  if (requested && typeof requested === "object") {
++    return requested;
++  }
+   if (requested === "auto") {
+     const preferred = themeMode === "light" ? "paper" : "graphite";
+     return THEMES.find((theme) => theme.id === preferred) ?? THEMES[0];
+@@ -3368,5 +3375,6 @@ export {
+   HunkDiffView,
+   HunkDiffFileHeader,
+   HunkDiffBody,
++  createHunkDiffTheme,
+   HUNK_DIFF_THEME_NAMES
+ };
+diff --git a/dist/npm/opentui/themes.d.ts b/dist/npm/opentui/themes.d.ts
+index 12a93cb3ad0677530610a2603068bd9c7643c687..e72dacf540550b446109528913fb8e580e8bb585 100644
+--- a/dist/npm/opentui/themes.d.ts
++++ b/dist/npm/opentui/themes.d.ts
+@@ -1,2 +1,96 @@
+ export declare const HUNK_DIFF_THEME_NAMES: readonly ["graphite", "midnight", "paper", "ember", "catppuccin-latte", "catppuccin-frappe", "catppuccin-macchiato", "catppuccin-mocha", "zenburn"];
+ export type HunkDiffThemeName = (typeof HUNK_DIFF_THEME_NAMES)[number];
++export type HunkDiffThemeAppearance = "dark" | "light";
++export interface HunkDiffSyntaxColors {
++    default: string;
++    keyword: string;
++    string: string;
++    comment: string;
++    number: string;
++    function: string;
++    property: string;
++    type: string;
++    punctuation: string;
++}
++export interface HunkDiffCustomTheme {
++    id?: string;
++    base?: HunkDiffThemeName;
++    label?: string;
++    appearance?: HunkDiffThemeAppearance;
++    background?: string;
++    panel?: string;
++    panelAlt?: string;
++    border?: string;
++    accent?: string;
++    accentMuted?: string;
++    text?: string;
++    muted?: string;
++    addedBg?: string;
++    removedBg?: string;
++    movedAddedBg?: string;
++    movedRemovedBg?: string;
++    contextBg?: string;
++    addedContentBg?: string;
++    removedContentBg?: string;
++    contextContentBg?: string;
++    addedSignColor?: string;
++    removedSignColor?: string;
++    lineNumberBg?: string;
++    lineNumberFg?: string;
++    selectedHunk?: string;
++    badgeAdded?: string;
++    badgeRemoved?: string;
++    badgeNeutral?: string;
++    fileNew?: string;
++    fileDeleted?: string;
++    fileRenamed?: string;
++    fileModified?: string;
++    fileUntracked?: string;
++    noteBorder?: string;
++    noteBackground?: string;
++    noteTitleBackground?: string;
++    noteTitleText?: string;
++    syntax?: Partial<HunkDiffSyntaxColors>;
++}
++export interface HunkDiffTheme {
++    id: string;
++    label: string;
++    appearance: HunkDiffThemeAppearance;
++    background: string;
++    panel: string;
++    panelAlt: string;
++    border: string;
++    accent: string;
++    accentMuted: string;
++    text: string;
++    muted: string;
++    addedBg: string;
++    removedBg: string;
++    movedAddedBg: string;
++    movedRemovedBg: string;
++    contextBg: string;
++    addedContentBg: string;
++    removedContentBg: string;
++    contextContentBg: string;
++    addedSignColor: string;
++    removedSignColor: string;
++    lineNumberBg: string;
++    lineNumberFg: string;
++    selectedHunk: string;
++    badgeAdded: string;
++    badgeRemoved: string;
++    badgeNeutral: string;
++    fileNew: string;
++    fileDeleted: string;
++    fileRenamed: string;
++    fileModified: string;
++    fileUntracked: string;
++    noteBorder: string;
++    noteBackground: string;
++    noteTitleBackground: string;
++    noteTitleText: string;
++    syntaxColors: HunkDiffSyntaxColors;
++    syntaxStyle: unknown;
++}
++export type HunkDiffThemeInput = HunkDiffThemeName | HunkDiffTheme;
++export declare function createHunkDiffTheme(customTheme: HunkDiffCustomTheme): HunkDiffTheme;
+diff --git a/dist/npm/opentui/types.d.ts b/dist/npm/opentui/types.d.ts
+index c2aa417b0a0346a3afdb95a40681950c37a6d547..7e221b1e46c25214081cef7fc8cfe0d44be8622a 100644
+--- a/dist/npm/opentui/types.d.ts
++++ b/dist/npm/opentui/types.d.ts
+@@ -1,5 +1,5 @@
+ import type { FileDiffMetadata } from "@pierre/diffs";
+-import type { HunkDiffThemeName } from "./themes";
++import type { HunkDiffThemeInput } from "./themes";
+ export type HunkDiffLayout = "split" | "stack";
+ /** Line stats shown by public Hunk OpenTUI primitives. */
+ export interface HunkDiffStats {
+@@ -33,7 +33,7 @@ export interface HunkDiffBodyProps {
+     file?: HunkDiffFileInput;
+     layout?: HunkDiffLayout;
+     width: number;
+-    theme?: HunkDiffThemeName;
++    theme?: HunkDiffThemeInput;
+     showLineNumbers?: boolean;
+     showHunkHeaders?: boolean;
+     wrapLines?: boolean;
+@@ -49,14 +49,14 @@ export interface HunkDiffViewProps extends Omit<HunkDiffBodyProps, "file"> {
+ export interface HunkDiffFileHeaderProps {
+     file: HunkDiffFileInput;
+     width: number;
+-    theme?: HunkDiffThemeName;
++    theme?: HunkDiffThemeInput;
+     onSelect?: () => void;
+ }
+ export interface HunkReviewStreamProps {
+     files: HunkDiffFileInput[];
+     layout?: HunkDiffLayout;
+     width: number;
+-    theme?: HunkDiffThemeName;
++    theme?: HunkDiffThemeInput;
+     selection?: HunkDiffSelection;
+     showFileHeaders?: boolean;
+     showFileSeparators?: boolean;
+@@ -71,6 +71,6 @@ export interface HunkFileNavProps {
+     files: HunkDiffFileInput[];
+     selectedFileId?: string;
+     width: number;
+-    theme?: HunkDiffThemeName;
++    theme?: HunkDiffThemeInput;
+     onSelectFile?: (fileId: string) => void;
+ }

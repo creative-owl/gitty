@@ -1,12 +1,28 @@
 import { createContext, useContext } from "react"
-import type { HunkDiffThemeName } from "hunkdiff/opentui"
+import {
+  createHunkDiffTheme,
+  HUNK_DIFF_THEME_NAMES,
+  type HunkDiffThemeInput,
+  type HunkDiffThemeName,
+} from "hunkdiff/opentui"
+import {
+  GHOSTTY_THEME_DEFINITIONS,
+  GHOSTTY_THEME_NAMES,
+  type GhosttyThemeDefinition,
+  type GhosttyThemeName,
+} from "./ghosttyThemes"
+
+export type { GhosttyThemeName }
+export type ThemeName = HunkDiffThemeName | GhosttyThemeName
+
+export const THEME_NAMES = [...HUNK_DIFF_THEME_NAMES, ...GHOSTTY_THEME_NAMES] as ThemeName[]
 
 export type AppTheme = {
   appearance: "dark" | "light"
   base: string
   blue: string
   green: string
-  id: HunkDiffThemeName
+  id: ThemeName
   label: string
   lavender: string
   mantle: string
@@ -19,7 +35,7 @@ export type AppTheme = {
   yellow: string
 }
 
-export const APP_THEMES: Record<HunkDiffThemeName, AppTheme> = {
+const BUILT_IN_APP_THEMES: Record<HunkDiffThemeName, AppTheme> = {
   graphite: {
     appearance: "dark",
     base: "#111315",
@@ -175,13 +191,178 @@ export const APP_THEMES: Record<HunkDiffThemeName, AppTheme> = {
   },
 }
 
+type GhosttyResolvedTheme = {
+  appTheme: AppTheme
+  hunkDiffTheme: HunkDiffThemeInput
+}
+
+const GHOSTTY_THEMES = Object.fromEntries(
+  GHOSTTY_THEME_DEFINITIONS.map((definition) => {
+    const theme = createGhosttyTheme(definition)
+    return [theme.appTheme.id, theme]
+  }),
+) as Record<GhosttyThemeName, GhosttyResolvedTheme>
+
+const GHOSTTY_APP_THEMES = Object.fromEntries(
+  Object.values(GHOSTTY_THEMES).map((theme) => [theme.appTheme.id, theme.appTheme]),
+) as Record<GhosttyThemeName, AppTheme>
+
+const GHOSTTY_HUNK_DIFF_THEMES = Object.fromEntries(
+  Object.values(GHOSTTY_THEMES).map((theme) => [theme.appTheme.id, theme.hunkDiffTheme]),
+) as Record<GhosttyThemeName, HunkDiffThemeInput>
+
+export const APP_THEMES: Record<ThemeName, AppTheme> = {
+  ...BUILT_IN_APP_THEMES,
+  ...GHOSTTY_APP_THEMES,
+}
+
 export const MACCHIATO = APP_THEMES["catppuccin-macchiato"]
 export const AppThemeContext = createContext<AppTheme>(MACCHIATO)
 
-export function getAppTheme(themeName: HunkDiffThemeName): AppTheme {
+export function getAppTheme(themeName: ThemeName): AppTheme {
   return APP_THEMES[themeName] ?? MACCHIATO
+}
+
+export function getHunkDiffTheme(themeName: ThemeName): HunkDiffThemeInput {
+  return GHOSTTY_HUNK_DIFF_THEMES[themeName as GhosttyThemeName] ?? (themeName as HunkDiffThemeName)
+}
+
+export function isThemeName(value: string | undefined): value is ThemeName {
+  return THEME_NAMES.includes(value as ThemeName)
 }
 
 export function useAppTheme() {
   return useContext(AppThemeContext)
+}
+
+function createGhosttyTheme(definition: GhosttyThemeDefinition): GhosttyResolvedTheme {
+  const [id, label, background, foreground, _selectionBackground, _selectionForeground, palette] = definition
+  const themeId = id as GhosttyThemeName
+  const appearance = getThemeAppearance(background)
+  const red = paletteColor(palette, 9, paletteColor(palette, 1, "#ff6b6b"))
+  const green = paletteColor(palette, 10, paletteColor(palette, 2, "#69db7c"))
+  const yellow = paletteColor(palette, 11, paletteColor(palette, 3, "#ffd43b"))
+  const blue = paletteColor(palette, 12, paletteColor(palette, 4, "#74c0fc"))
+  const mauve = paletteColor(palette, 13, paletteColor(palette, 5, "#da77f2"))
+  const lavender = paletteColor(palette, 14, blue)
+  const mutedSource = paletteColor(palette, 8, foreground)
+  const subtext0 = appearance === "light" ? blendHex(foreground, background, 0.65) : mutedSource
+  const mantle = appearance === "light" ? blendHex("#ffffff", background, 0.5) : blendHex("#000000", background, 0.18)
+  const surface0 = blendHex(mutedSource, background, appearance === "light" ? 0.12 : 0.35)
+  const surface2 = blendHex(mutedSource, background, appearance === "light" ? 0.25 : 0.55)
+  const accent = blue
+
+  const appTheme: AppTheme = {
+    appearance,
+    base: background,
+    blue,
+    green,
+    id: themeId,
+    label,
+    lavender,
+    mantle,
+    mauve,
+    red,
+    subtext0,
+    surface0,
+    surface2,
+    text: foreground,
+    yellow,
+  }
+
+  return {
+    appTheme,
+    hunkDiffTheme: createHunkDiffTheme({
+      id: themeId,
+      label,
+      appearance,
+      base: appearance === "light" ? "paper" : "graphite",
+      background,
+      panel: mantle,
+      panelAlt: surface0,
+      border: surface2,
+      accent,
+      accentMuted: blendHex(accent, mantle, 0.26),
+      text: foreground,
+      muted: subtext0,
+      addedBg: blendHex(green, background, 0.14),
+      removedBg: blendHex(red, background, 0.16),
+      movedAddedBg: blendHex(blue, background, 0.16),
+      movedRemovedBg: blendHex(mauve, background, 0.16),
+      contextBg: background,
+      addedContentBg: blendHex(green, background, 0.23),
+      removedContentBg: blendHex(red, background, 0.24),
+      contextContentBg: background,
+      addedSignColor: green,
+      removedSignColor: red,
+      lineNumberBg: mantle,
+      lineNumberFg: subtext0,
+      selectedHunk: surface0,
+      badgeAdded: green,
+      badgeRemoved: red,
+      badgeNeutral: subtext0,
+      fileNew: green,
+      fileDeleted: red,
+      fileRenamed: yellow,
+      fileModified: mauve,
+      fileUntracked: blue,
+      noteBorder: mauve,
+      noteBackground: blendHex(mauve, mantle, 0.12),
+      noteTitleBackground: blendHex(mauve, mantle, 0.22),
+      noteTitleText: foreground,
+      syntax: {
+        default: foreground,
+        keyword: mauve,
+        string: green,
+        comment: subtext0,
+        number: yellow,
+        function: blue,
+        property: blue,
+        type: yellow,
+        punctuation: subtext0,
+      },
+    }),
+  }
+}
+
+function paletteColor(palette: readonly string[], index: number, fallback: string) {
+  return palette[index] ?? fallback
+}
+
+function getThemeAppearance(background: string): "dark" | "light" {
+  return getLuminance(background) > 0.55 ? "light" : "dark"
+}
+
+function blendHex(foreground: string, background: string, ratio: number) {
+  const front = hexToRgb(foreground)
+  const back = hexToRgb(background)
+  const mix = (frontChannel: number, backChannel: number) =>
+    Math.max(0, Math.min(255, Math.round(backChannel + (frontChannel - backChannel) * ratio)))
+
+  return rgbToHex(mix(front.r, back.r), mix(front.g, back.g), mix(front.b, back.b))
+}
+
+function getLuminance(color: string) {
+  const { r, g, b } = hexToRgb(color)
+  const normalize = (channel: number) => {
+    const value = channel / 255
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  }
+
+  return 0.2126 * normalize(r) + 0.7152 * normalize(g) + 0.0722 * normalize(b)
+}
+
+function hexToRgb(color: string) {
+  const normalized = color.replace("#", "")
+  const value = Number.parseInt(normalized, 16)
+
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255,
+  }
+}
+
+function rgbToHex(r: number, g: number, b: number) {
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`
 }

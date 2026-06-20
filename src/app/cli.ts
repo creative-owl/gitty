@@ -1,16 +1,16 @@
-import { HUNK_DIFF_THEME_NAMES, type HunkDiffThemeName } from "hunkdiff/opentui"
+import { isThemeName, THEME_NAMES, type ThemeName } from "../shared/theme"
 
 export type CliOptions = {
   help: boolean
   patchFile?: string
   staged: boolean
   sample: boolean
-  theme: HunkDiffThemeName
+  theme: ThemeName
   themeProvided: boolean
   repositoryDirs: string[]
 }
 
-export const DEFAULT_THEME: HunkDiffThemeName = "catppuccin-macchiato"
+export const DEFAULT_THEME: ThemeName = "catppuccin-macchiato"
 
 export function usage() {
   return `Usage:
@@ -25,7 +25,7 @@ Options:
   --repository <dir>   Add a git repository. Repeat for multiple repositories.
   --staged            Show staged git changes instead of unstaged changes.
   --sample            Show the built-in sample diff.
-  --theme <name>      ${HUNK_DIFF_THEME_NAMES.join(", ")}
+  --theme <name>      ${THEME_NAMES.join(", ")}
                       Defaults to ${DEFAULT_THEME}.
   -h, --help          Show this help text.`
 }
@@ -115,8 +115,8 @@ export function parseCliOptions(args: string[]): CliOptions {
 
     if (arg === "--theme") {
       const next = args[index + 1]
-      if (!isTheme(next)) {
-        throw new Error(`--theme must be one of: ${HUNK_DIFF_THEME_NAMES.join(", ")}`)
+      if (!isThemeName(next)) {
+        throw new Error(`--theme must be one of: ${THEME_NAMES.join(", ")}`)
       }
       options.theme = next
       options.themeProvided = true
@@ -126,8 +126,8 @@ export function parseCliOptions(args: string[]): CliOptions {
 
     if (arg.startsWith("--theme=")) {
       const next = arg.slice("--theme=".length)
-      if (!isTheme(next)) {
-        throw new Error(`--theme must be one of: ${HUNK_DIFF_THEME_NAMES.join(", ")}`)
+      if (!isThemeName(next)) {
+        throw new Error(`--theme must be one of: ${THEME_NAMES.join(", ")}`)
       }
       options.theme = next
       options.themeProvided = true
@@ -145,8 +145,4 @@ export function parseCliOptions(args: string[]): CliOptions {
   }
 
   return options
-}
-
-function isTheme(value: string | undefined): value is HunkDiffThemeName {
-  return HUNK_DIFF_THEME_NAMES.includes(value as HunkDiffThemeName)
 }

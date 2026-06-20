@@ -1,4 +1,4 @@
-import { HunkReviewStream, type HunkDiffSelection, type HunkDiffThemeName } from "hunkdiff/opentui"
+import { HunkReviewStream, type HunkDiffSelection, type HunkDiffThemeInput } from "hunkdiff/opentui"
 import { fitText } from "../../../shared/lib/text"
 import { useAppTheme } from "../../../shared/theme"
 import type { RepositoryView } from "../../repositories/model/types"
@@ -12,7 +12,7 @@ export function GitPane({
 }: {
   onSelectionChange: (selection: HunkDiffSelection) => void
   selection: HunkDiffSelection
-  theme: HunkDiffThemeName
+  theme: HunkDiffThemeInput
   width: number
   repository?: RepositoryView
 }) {

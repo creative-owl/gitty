@@ -1,5 +1,5 @@
 import type { MouseEvent } from "@opentui/core"
-import type { HunkDiffThemeName } from "hunkdiff/opentui"
+import type { HunkDiffThemeInput } from "hunkdiff/opentui"
 import { fitText } from "../../../shared/lib/text"
 import { useAppTheme } from "../../../shared/theme"
 import type {
@@ -27,7 +27,7 @@ export function PullRequestContentPane({
   onOpenUrl: (url: string) => void
   onSelectTab: (tab: PullRequestTab) => void
   summary?: PullRequestSummary
-  theme: HunkDiffThemeName
+  theme: HunkDiffThemeInput
   width: number
 }) {
   const appTheme = useAppTheme()

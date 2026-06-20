@@ -14,12 +14,14 @@ describe("parseCliOptions", () => {
   })
 
   test("parses repositories, staged changes, and explicit theme", () => {
-    expect(parseCliOptions(["--repository", "../repo-a", "--workspace=../repo-b", "--staged", "--theme", "ember"])).toEqual({
+    expect(
+      parseCliOptions(["--repository", "../repo-a", "--workspace=../repo-b", "--staged", "--theme", "ghostty-dracula"]),
+    ).toEqual({
       help: false,
       repositoryDirs: ["../repo-a", "../repo-b"],
       sample: false,
       staged: true,
-      theme: "ember",
+      theme: "ghostty-dracula",
       themeProvided: true,
     })
   })

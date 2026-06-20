@@ -1,6 +1,6 @@
 import { CliRenderEvents, type Selection } from "@opentui/core"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import type { HunkDiffSelection, HunkDiffThemeName } from "hunkdiff/opentui"
+import type { HunkDiffSelection } from "hunkdiff/opentui"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { defaultSelection, normalizeSelection } from "../features/diff/model/diff"
 import { GitPane } from "../features/diff/ui/GitPane"
@@ -30,7 +30,7 @@ import {
   openExternalUrl,
 } from "../shared/lib/platform"
 import { fitText, pluralize } from "../shared/lib/text"
-import { AppThemeContext, getAppTheme } from "../shared/theme"
+import { AppThemeContext, getAppTheme, getHunkDiffTheme, type ThemeName } from "../shared/theme"
 import { StatusOverlay, type OpenRepositoryStatus } from "../widgets/status-overlay/StatusOverlay"
 import type { ActivePane } from "./model/types"
 
@@ -48,12 +48,13 @@ export function DiffApp({
   initialRepositories: RepositoryView[]
   persistWorkspaces: boolean
   staged: boolean
-  theme: HunkDiffThemeName
+  theme: ThemeName
 }) {
   const renderer = useRenderer()
   const terminal = useTerminalDimensions()
   const pullRequestLoadIds = useRef(new Set<string>())
   const lastSavedWorkspacePathKey = useRef<string | undefined>(undefined)
+  const themeBeforePicker = useRef<ThemeName | undefined>(undefined)
   const [repositories, setRepositories] = useState<RepositoryView[]>(initialRepositories)
   const firstRepository = repositories[0]
   const [activePane, setActivePane] = useState<ActivePane>(() => ({
@@ -67,7 +68,7 @@ export function DiffApp({
   const [repositoryPathInput, setRepositoryPathInput] = useState("")
   const [selectedPathSuggestionIndex, setSelectedPathSuggestionIndex] = useState(0)
   const [openPromptError, setOpenPromptError] = useState("")
-  const [theme, setTheme] = useState<HunkDiffThemeName>(initialTheme)
+  const [theme, setTheme] = useState<ThemeName>(initialTheme)
   const [isThemePickerVisible, setThemePickerVisible] = useState(false)
   const [selectedThemeIndex, setSelectedThemeIndex] = useState(() => getThemeIndex(initialTheme))
   const [status, setStatus] = useState<OpenRepositoryStatus>()
@@ -98,8 +99,10 @@ export function DiffApp({
   const pathSuggestions = useMemo(() => createPathSuggestions(repositoryPathInput), [repositoryPathInput])
   const normalizedPathSuggestionIndex =
     pathSuggestions.length > 0 ? Math.min(selectedPathSuggestionIndex, pathSuggestions.length - 1) : 0
-  const themePickerTop = Math.max(1, Math.min(Math.max(1, terminal.height - THEME_NAMES.length - 5), 4))
+  const themePickerHeight = Math.max(5, Math.min(THEME_NAMES.length + 4, Math.max(5, terminal.height - 2), 18))
+  const themePickerTop = Math.max(1, Math.min(Math.max(1, terminal.height - themePickerHeight - 1), 4))
   const appTheme = useMemo(() => getAppTheme(theme), [theme])
+  const hunkTheme = useMemo(() => getHunkDiffTheme(theme), [theme])
 
   useEffect(() => {
     persistWorkspaceRepositories(repositories)
@@ -121,6 +124,17 @@ export function DiffApp({
       })
     }
   }, [repositories])
+
+  useEffect(() => {
+    if (!isThemePickerVisible) {
+      return
+    }
+
+    const previewTheme = THEME_NAMES[selectedThemeIndex]
+    if (previewTheme) {
+      setTheme(previewTheme)
+    }
+  }, [isThemePickerVisible, selectedThemeIndex])
 
   useEffect(() => {
     if (activePane.kind !== "pull-request" || !activeRepository || activePullRequestDetailState) {
@@ -400,14 +414,18 @@ export function DiffApp({
   function showThemePicker() {
     setOpenPromptVisible(false)
     setOpenPromptError("")
+    themeBeforePicker.current = theme
     setSelectedThemeIndex(getThemeIndex(theme))
     setStatus(undefined)
     setThemePickerVisible(true)
   }
 
   function cancelThemePicker() {
+    const restoredTheme = themeBeforePicker.current ?? theme
+    themeBeforePicker.current = undefined
+    setTheme(restoredTheme)
     setThemePickerVisible(false)
-    setSelectedThemeIndex(getThemeIndex(theme))
+    setSelectedThemeIndex(getThemeIndex(restoredTheme))
   }
 
   function moveThemeSelection(delta: number) {
@@ -417,7 +435,8 @@ export function DiffApp({
     })
   }
 
-  function selectTheme(nextTheme: HunkDiffThemeName) {
+  function selectTheme(nextTheme: ThemeName) {
+    themeBeforePicker.current = undefined
     setTheme(nextTheme)
     setSelectedThemeIndex(getThemeIndex(nextTheme))
     setThemePickerVisible(false)
@@ -584,14 +603,14 @@ export function DiffApp({
               onOpenUrl={openPullRequestUrl}
               pullRequestNumber={activePane.pullRequestNumber}
               summary={activePullRequestSummary}
-              theme={theme}
+              theme={hunkTheme}
               width={gitPaneWidth}
             />
           ) : (
             <GitPane
               onSelectionChange={setActiveSelection}
               selection={selection}
-              theme={theme}
+              theme={hunkTheme}
               width={gitPaneWidth}
               repository={activeRepository}
             />
@@ -601,6 +620,7 @@ export function DiffApp({
         {isThemePickerVisible ? (
           <ThemePickerPopup
             currentTheme={theme}
+            height={themePickerHeight}
             onSelectTheme={selectTheme}
             selectedThemeIndex={selectedThemeIndex}
             top={themePickerTop}

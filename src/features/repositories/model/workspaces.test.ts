@@ -51,12 +51,12 @@ describe("workspace state", () => {
   })
 
   test("preserves a saved theme when workspace paths are rewritten", () => {
-    expect(saveWorkspaceTheme("zenburn")).toBe(true)
+    expect(saveWorkspaceTheme("ghostty-dracula")).toBe(true)
     expect(saveWorkspacePaths(["/repo/c"])).toBe(true)
 
     expect(readSavedWorkspaceState()).toEqual({
       paths: ["/repo/c"],
-      theme: "zenburn",
+      theme: "ghostty-dracula",
     })
   })
 
