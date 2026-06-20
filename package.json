@@ -52,9 +52,9 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@opentui/core": "^0.1.89",
-    "@opentui/react": "^0.1.89",
-    "@pierre/diffs": "1.2.2",
+    "@opentui/core": "^0.4.1",
+    "@opentui/react": "^0.4.1",
+    "@pierre/diffs": "1.2.10",
     "hunkdiff": "^0.15.3",
     "jsdom": "^29.1.1",
     "marked": "17.0.1",
