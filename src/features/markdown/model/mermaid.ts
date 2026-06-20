@@ -429,6 +429,8 @@ function readTerminalDiagramEdgePoints(edge: Element) {
     }
   }
 
+  // Mermaid flowcharts primarily emit M, L, and C path commands here; this fallback intentionally
+  // does not parse other SVG commands such as Q, A, H, V, S, or T.
   return [...(edge.getAttribute("d") ?? "").matchAll(/[MLC]\s*(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/g)].map(
     (match) => ({
       x: Number.parseFloat(match[1] ?? "0"),
