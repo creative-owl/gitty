@@ -95,7 +95,7 @@ function getWorkspaceStateDirectory() {
 }
 
 function parseWorkspacePaths(value: unknown) {
-  const workspaceValues = isRecord(value) ? asArray(value.workspaces) : asArray(value)
+  const workspaceValues = Array.isArray(value) ? value : isRecord(value) ? asArray(value.workspaces) : []
   return uniqueNonEmptyStrings(
     workspaceValues.flatMap((workspace) => {
       const path = readWorkspacePath(workspace)
