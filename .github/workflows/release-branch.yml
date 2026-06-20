@@ -1,0 +1,154 @@
+name: Create release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      type:
+        type: choice
+        description: Choose release type
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      beta:
+        type: boolean
+        description: Prerelease
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Bun checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run typecheck
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun test
+
+      - name: Pack package
+        run: bun pm pack --dry-run
+
+  bump-version-and-create-pr:
+    name: Bump version and create PR
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Bump package version
+        id: bump-version
+        env:
+          INPUT_TYPE: ${{ github.event.inputs.type }}
+          INPUT_BETA: ${{ github.event.inputs.beta }}
+        run: |
+          bun --eval '
+          const fs = require("node:fs");
+
+          const type = process.env.INPUT_TYPE || "patch";
+          const beta = process.env.INPUT_BETA === "true";
+          const validTypes = new Set(["patch", "minor", "major"]);
+
+          if (!validTypes.has(type)) {
+            throw new Error(`Unsupported release type: ${type}`);
+          }
+
+          const pkgPath = "package.json";
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+          const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+)(?:\.(\d+))?)?$/.exec(pkg.version);
+
+          if (!match) {
+            throw new Error(`Unsupported package version: ${pkg.version}`);
+          }
+
+          let major = Number(match[1]);
+          let minor = Number(match[2]);
+          let patch = Number(match[3]);
+          const preid = match[4];
+          const prenumber = match[5] === undefined ? -1 : Number(match[5]);
+
+          const bumpStable = () => {
+            if (type === "major") {
+              major += 1;
+              minor = 0;
+              patch = 0;
+            } else if (type === "minor") {
+              minor += 1;
+              patch = 0;
+            } else {
+              patch += 1;
+            }
+          };
+
+          let version;
+          if (beta) {
+            if (preid === "beta") {
+              version = `${major}.${minor}.${patch}-beta.${Number.isFinite(prenumber) ? prenumber + 1 : 0}`;
+            } else {
+              bumpStable();
+              version = `${major}.${minor}.${patch}-beta.0`;
+            }
+          } else if (preid) {
+            version = `${major}.${minor}.${patch}`;
+          } else {
+            bumpStable();
+            version = `${major}.${minor}.${patch}`;
+          }
+
+          pkg.version = version;
+          fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `newVersion=${version}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `newTag=v${version}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `newBranch=release/version-${version}\n`);
+          '
+
+      - name: Pack package
+        run: bun pm pack --dry-run
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: ${{ steps.bump-version.outputs.newBranch }}
+          base: main
+          commit-message: "chore(release): prepare release ${{ steps.bump-version.outputs.newTag }}"
+          body: "This PR prepares the release ${{ steps.bump-version.outputs.newTag }}."
+          title: "chore(release): prepare release ${{ steps.bump-version.outputs.newTag }}"
+          maintainer-can-modify: true
+          draft: false
+          labels: |
+            type::automated-pr
+            commit::chore
