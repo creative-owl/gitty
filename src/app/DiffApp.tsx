@@ -18,9 +18,12 @@ import { openGitRepository } from "../features/repositories/model/repositories"
 import type { RepositoryView } from "../features/repositories/model/types"
 import {
   getPersistableWorkspacePaths,
+  saveWorkspaceTheme,
   saveWorkspacePaths,
 } from "../features/repositories/model/workspaces"
 import { RepositorySidebar } from "../features/repository-sidebar/ui/RepositorySidebar"
+import { getThemeIndex, THEME_NAMES } from "../features/theme-picker/model/themes"
+import { ThemePickerPopup } from "../features/theme-picker/ui/ThemePickerPopup"
 import {
   copyTextToClipboard,
   formatCopiedSelectionStatus,
@@ -40,7 +43,7 @@ export function DiffApp({
   initialRepositories,
   persistWorkspaces,
   staged,
-  theme,
+  theme: initialTheme,
 }: {
   initialRepositories: RepositoryView[]
   persistWorkspaces: boolean
@@ -64,6 +67,9 @@ export function DiffApp({
   const [repositoryPathInput, setRepositoryPathInput] = useState("")
   const [selectedPathSuggestionIndex, setSelectedPathSuggestionIndex] = useState(0)
   const [openPromptError, setOpenPromptError] = useState("")
+  const [theme, setTheme] = useState<HunkDiffThemeName>(initialTheme)
+  const [isThemePickerVisible, setThemePickerVisible] = useState(false)
+  const [selectedThemeIndex, setSelectedThemeIndex] = useState(() => getThemeIndex(initialTheme))
   const [status, setStatus] = useState<OpenRepositoryStatus>()
   const activeRepositoryId = activePane.repositoryId
 
@@ -88,10 +94,11 @@ export function DiffApp({
   )
   const gitPaneWidth = Math.max(1, shellWidth - repositoryWidth - 1)
   const headerWidth = shellWidth
-  const commandText = `${pluralize(repositories.length, "repository", "repositories")}  |  o open repository  |  tab/click repo or PR  |  q quit`
+  const commandText = `${pluralize(repositories.length, "repository", "repositories")}  |  o open repository  |  t theme  |  tab/click repo or PR  |  q quit`
   const pathSuggestions = useMemo(() => createPathSuggestions(repositoryPathInput), [repositoryPathInput])
   const normalizedPathSuggestionIndex =
     pathSuggestions.length > 0 ? Math.min(selectedPathSuggestionIndex, pathSuggestions.length - 1) : 0
+  const themePickerTop = Math.max(1, Math.min(Math.max(1, terminal.height - THEME_NAMES.length - 5), 4))
 
   useEffect(() => {
     persistWorkspaceRepositories(repositories)
@@ -241,6 +248,7 @@ export function DiffApp({
     setSelectedPathSuggestionIndex(0)
     setOpenPromptError("")
     setStatus(undefined)
+    setThemePickerVisible(false)
     setOpenPromptVisible(true)
   }
 
@@ -388,6 +396,43 @@ export function DiffApp({
     }
   }
 
+  function showThemePicker() {
+    setOpenPromptVisible(false)
+    setOpenPromptError("")
+    setSelectedThemeIndex(getThemeIndex(theme))
+    setStatus(undefined)
+    setThemePickerVisible(true)
+  }
+
+  function cancelThemePicker() {
+    setThemePickerVisible(false)
+    setSelectedThemeIndex(getThemeIndex(theme))
+  }
+
+  function moveThemeSelection(delta: number) {
+    setSelectedThemeIndex((currentIndex) => {
+      const nextIndex = currentIndex + delta
+      return (nextIndex + THEME_NAMES.length) % THEME_NAMES.length
+    })
+  }
+
+  function selectTheme(nextTheme: HunkDiffThemeName) {
+    setTheme(nextTheme)
+    setSelectedThemeIndex(getThemeIndex(nextTheme))
+    setThemePickerVisible(false)
+    const saved = saveWorkspaceTheme(nextTheme)
+    setStatus({
+      text: saved ? `Theme saved: ${nextTheme}.` : `Theme changed: ${nextTheme}.`,
+    })
+  }
+
+  function submitSelectedTheme() {
+    const nextTheme = THEME_NAMES[selectedThemeIndex]
+    if (nextTheme) {
+      selectTheme(nextTheme)
+    }
+  }
+
   function persistWorkspaceRepositories(nextRepositories: RepositoryView[]) {
     if (!persistWorkspaces) {
       return
@@ -434,6 +479,33 @@ export function DiffApp({
       return
     }
 
+    if (isThemePickerVisible) {
+      if (name === "escape") {
+        key.preventDefault()
+        cancelThemePicker()
+        return
+      }
+
+      if (name === "up" || name === "kpup") {
+        key.preventDefault()
+        moveThemeSelection(-1)
+        return
+      }
+
+      if (name === "down" || name === "kpdown") {
+        key.preventDefault()
+        moveThemeSelection(1)
+        return
+      }
+
+      if (name === "return" || name === "enter" || sequence === "\r") {
+        key.preventDefault()
+        submitSelectedTheme()
+        return
+      }
+      return
+    }
+
     if (name === "escape" || name === "q" || sequence === "q") {
       persistWorkspaceRepositories(repositories)
       renderer.destroy()
@@ -442,6 +514,11 @@ export function DiffApp({
 
     if (name === "o" || sequence === "o") {
       showOpenRepositoryPrompt()
+      return
+    }
+
+    if (name === "t" || sequence === "t") {
+      showThemePicker()
       return
     }
 
@@ -519,6 +596,15 @@ export function DiffApp({
         )}
       </box>
       <StatusOverlay status={status} width={headerWidth} />
+      {isThemePickerVisible ? (
+        <ThemePickerPopup
+          currentTheme={theme}
+          onSelectTheme={selectTheme}
+          selectedThemeIndex={selectedThemeIndex}
+          top={themePickerTop}
+          width={headerWidth}
+        />
+      ) : null}
     </box>
   )
 }

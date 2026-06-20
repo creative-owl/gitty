@@ -6,10 +6,11 @@ export type CliOptions = {
   staged: boolean
   sample: boolean
   theme: HunkDiffThemeName
+  themeProvided: boolean
   repositoryDirs: string[]
 }
 
-const DEFAULT_THEME: HunkDiffThemeName = "catppuccin-macchiato"
+export const DEFAULT_THEME: HunkDiffThemeName = "catppuccin-macchiato"
 
 export function usage() {
   return `Usage:
@@ -35,6 +36,7 @@ export function parseCliOptions(args: string[]): CliOptions {
     staged: false,
     sample: false,
     theme: DEFAULT_THEME,
+    themeProvided: false,
     repositoryDirs: [],
   }
 
@@ -117,6 +119,7 @@ export function parseCliOptions(args: string[]): CliOptions {
         throw new Error(`--theme must be one of: ${HUNK_DIFF_THEME_NAMES.join(", ")}`)
       }
       options.theme = next
+      options.themeProvided = true
       index += 1
       continue
     }
@@ -127,6 +130,7 @@ export function parseCliOptions(args: string[]): CliOptions {
         throw new Error(`--theme must be one of: ${HUNK_DIFF_THEME_NAMES.join(", ")}`)
       }
       options.theme = next
+      options.themeProvided = true
       continue
     }
 

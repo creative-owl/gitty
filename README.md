@@ -36,6 +36,7 @@ Inside the TUI:
 
 - `o` opens another git repository by path. Relative paths and `~` are supported.
 - In the open repository dialog, use `Up`/`Down` to pick a directory and `Tab` to complete it.
+- `t` opens the theme picker. Use `Up`/`Down` and `Enter` to apply a theme.
 - `Tab` cycles repositories.
 - Click any repository in the sidebar to switch to it.
 - Click a PR in the sidebar to open its review view. Click the PR URL in the detail header to open it in your browser.
@@ -48,7 +49,7 @@ Inside the TUI:
 - The git diff UI lives inside a swappable pane and always renders split diffs.
 - `q`, `Esc`, or `Ctrl+C` exits.
 
-Gitty defaults to Catppuccin Macchiato for the app shell and Hunk diff theme. You can still pass `--theme <name>` to try another Hunk theme.
+Gitty defaults to Catppuccin Macchiato for the app shell and Hunk diff theme. Theme picker choices are saved with workspace state, and you can still pass `--theme <name>` to override the saved Hunk theme for a run.
 
 ## Notes
 
