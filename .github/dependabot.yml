@@ -8,7 +8,7 @@ updates:
       time: "09:00"
       timezone: "Etc/UTC"
     cooldown:
-      default-days: 3
+      default-days: 7
     open-pull-requests-limit: 5
     labels:
       - "type::automated-pr"
@@ -31,7 +31,7 @@ updates:
       time: "09:00"
       timezone: "Etc/UTC"
     cooldown:
-      default-days: 3
+      default-days: 7
     open-pull-requests-limit: 5
     labels:
       - "type::automated-pr"
