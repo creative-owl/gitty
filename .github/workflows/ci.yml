@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   checks:
-    name: Bun checks
+    name: CI run
     runs-on: ubuntu-latest
 
     steps:
