@@ -5,7 +5,7 @@ import { createRoot } from "@opentui/react"
 import { parseCliOptions, usage } from "./app/cli"
 import { DiffApp } from "./app/DiffApp"
 import { resolveRepositories } from "./features/repositories/model/repositories"
-import { isPersistableWorkspace } from "./features/repositories/model/workspaces"
+import { isPersistableWorkspace, readSavedWorkspaceState } from "./features/repositories/model/workspaces"
 
 async function main() {
   const options = parseCliOptions(Bun.argv.slice(2))
@@ -15,7 +15,9 @@ async function main() {
     return
   }
 
+  const savedWorkspaceState = readSavedWorkspaceState()
   const repositories = await resolveRepositories(options)
+  const theme = options.themeProvided ? options.theme : savedWorkspaceState?.theme ?? options.theme
   const persistWorkspaces =
     !options.patchFile &&
     !options.sample &&
@@ -32,7 +34,7 @@ async function main() {
       initialRepositories={repositories}
       persistWorkspaces={persistWorkspaces}
       staged={options.staged}
-      theme={options.theme}
+      theme={theme}
     />,
   )
 }

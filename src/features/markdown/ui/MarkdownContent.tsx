@@ -1,14 +1,13 @@
 import { useMemo } from "react"
-import { MACCHIATO } from "../../../shared/theme"
-import { MARKDOWN_SYNTAX_STYLE, MARKDOWN_TABLE_OPTIONS } from "../model/constants"
+import { useAppTheme } from "../../../shared/theme"
+import { createMarkdownSyntaxStyle, createMarkdownTableOptions } from "../model/constants"
 import { createMarkdownBlocks } from "../model/parse"
-import type { MarkdownRenderBlock } from "../model/types"
 import { GithubAlertMarkdownBlock, DetailsMarkdownBlock, QuoteMarkdownBlock } from "./MarkdownBlocks"
 import { MarkdownListBlockView } from "./MarkdownList"
 import { MermaidDiagram } from "./MermaidDiagram"
 
 export function MarkdownContent({
-  backgroundColor = MACCHIATO.base,
+  backgroundColor,
   blockKeyPrefix,
   emptyText,
   markdown,
@@ -20,10 +19,14 @@ export function MarkdownContent({
   markdown: string
   width: number
 }) {
+  const theme = useAppTheme()
+  const resolvedBackgroundColor = backgroundColor ?? theme.base
   const blocks = useMemo(() => createMarkdownBlocks(markdown, emptyText), [emptyText, markdown])
+  const syntaxStyle = useMemo(() => createMarkdownSyntaxStyle(theme), [theme])
+  const tableOptions = useMemo(() => createMarkdownTableOptions(theme), [theme])
 
   return (
-    <box style={{ width: "100%", flexDirection: "column", backgroundColor }}>
+    <box style={{ width: "100%", flexDirection: "column", backgroundColor: resolvedBackgroundColor }}>
       {blocks.map((block, index) => {
         const key = `${blockKeyPrefix}:${index}`
         if (block.kind === "details") {
@@ -41,7 +44,7 @@ export function MarkdownContent({
         if (block.kind === "list") {
           return (
             <MarkdownListBlockView
-              backgroundColor={backgroundColor}
+              backgroundColor={resolvedBackgroundColor}
               block={block}
               blockKeyPrefix={key}
               key={key}
@@ -56,14 +59,14 @@ export function MarkdownContent({
 
         return (
           <markdown
-            bg={backgroundColor}
+            bg={resolvedBackgroundColor}
             conceal
             content={block.content}
-            fg={MACCHIATO.text}
+            fg={theme.text}
             internalBlockMode="top-level"
             key={key}
-            syntaxStyle={MARKDOWN_SYNTAX_STYLE}
-            tableOptions={MARKDOWN_TABLE_OPTIONS}
+            syntaxStyle={syntaxStyle}
+            tableOptions={tableOptions}
             style={{
               width: "100%",
               flexShrink: 0,

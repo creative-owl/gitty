@@ -1,5 +1,5 @@
 import { pluralize, pushWrappedRows, type TextRow } from "../../../shared/lib/text"
-import { MACCHIATO } from "../../../shared/theme"
+import { type AppTheme, useAppTheme } from "../../../shared/theme"
 import { TextRows } from "../../../shared/ui/TextRows"
 import { formatCheckStateLabel } from "../model/format"
 import { normalizeGitHubState } from "../model/parse"
@@ -15,16 +15,17 @@ export function PullRequestMetadataSidebar({
   summary?: PullRequestSummary
   width: number
 }) {
+  const theme = useAppTheme()
   const contentWidth = Math.max(1, width - 4)
   const rows = detail
-    ? createPullRequestMetadataRows(detail, contentWidth)
+    ? createPullRequestMetadataRows(detail, contentWidth, theme)
     : [
         {
-          color: MACCHIATO.lavender,
+          color: theme.lavender,
           text: "Status",
         },
         {
-          color: summary ? getPullRequestCheckStateColor(summary.checkState) : MACCHIATO.subtext0,
+          color: summary ? getPullRequestCheckStateColor(summary.checkState, theme) : theme.subtext0,
           text: summary ? formatCheckStateLabel(summary.checkState) : "Loading...",
         },
       ]
@@ -37,8 +38,8 @@ export function PullRequestMetadataSidebar({
         height: "100%",
         border: true,
         borderStyle: "rounded",
-        borderColor: MACCHIATO.surface2,
-        backgroundColor: MACCHIATO.mantle,
+        borderColor: theme.surface2,
+        backgroundColor: theme.mantle,
         paddingLeft: 1,
         paddingRight: 1,
       }}
@@ -50,56 +51,56 @@ export function PullRequestMetadataSidebar({
   )
 }
 
-function createPullRequestMetadataRows(detail: PullRequestDetail, width: number): TextRow[] {
+function createPullRequestMetadataRows(detail: PullRequestDetail, width: number, theme: AppTheme): TextRow[] {
   const rows: TextRow[] = [
-    { color: MACCHIATO.lavender, text: "Status" },
+    { color: theme.lavender, text: "Status" },
     {
-      color: getPullRequestCheckStateColor(detail.checkState),
+      color: getPullRequestCheckStateColor(detail.checkState, theme),
       text: formatCheckStateLabel(detail.checkState),
     },
   ]
 
   if (detail.reviewDecision) {
     rows.push({
-      color: detail.reviewDecision === "Changes Requested" ? MACCHIATO.red : MACCHIATO.subtext0,
+      color: detail.reviewDecision === "Changes Requested" ? theme.red : theme.subtext0,
       text: detail.reviewDecision,
     })
   }
 
-  rows.push({ color: MACCHIATO.subtext0, text: "" })
-  rows.push({ color: MACCHIATO.lavender, text: "Unresolved comments" })
+  rows.push({ color: theme.subtext0, text: "" })
+  rows.push({ color: theme.lavender, text: "Unresolved comments" })
   rows.push({
-    color: getUnresolvedReviewThreadCountColor(detail.unresolvedReviewThreadCount),
+    color: getUnresolvedReviewThreadCountColor(detail.unresolvedReviewThreadCount, theme),
     text: formatUnresolvedReviewThreadCount(detail.unresolvedReviewThreadCount),
   })
 
-  rows.push({ color: MACCHIATO.subtext0, text: "" })
-  rows.push({ color: MACCHIATO.lavender, text: "Reviewers" })
+  rows.push({ color: theme.subtext0, text: "" })
+  rows.push({ color: theme.lavender, text: "Reviewers" })
   if (detail.reviewers.length === 0) {
-    rows.push({ color: MACCHIATO.subtext0, text: "None" })
+    rows.push({ color: theme.subtext0, text: "None" })
   } else {
     for (const reviewer of detail.reviewers) {
-      pushWrappedRows(rows, `${reviewer.login} ${reviewer.state}`, width, getReviewerStateColor(reviewer.state))
+      pushWrappedRows(rows, `${reviewer.login} ${reviewer.state}`, width, getReviewerStateColor(reviewer.state, theme))
     }
   }
 
-  rows.push({ color: MACCHIATO.subtext0, text: "" })
-  rows.push({ color: MACCHIATO.lavender, text: "Assignees" })
+  rows.push({ color: theme.subtext0, text: "" })
+  rows.push({ color: theme.lavender, text: "Assignees" })
   if (detail.assignees.length === 0) {
-    rows.push({ color: MACCHIATO.subtext0, text: "None" })
+    rows.push({ color: theme.subtext0, text: "None" })
   } else {
     for (const assignee of detail.assignees) {
-      pushWrappedRows(rows, assignee, width, MACCHIATO.text)
+      pushWrappedRows(rows, assignee, width, theme.text)
     }
   }
 
-  rows.push({ color: MACCHIATO.subtext0, text: "" })
-  rows.push({ color: MACCHIATO.lavender, text: "Labels" })
+  rows.push({ color: theme.subtext0, text: "" })
+  rows.push({ color: theme.lavender, text: "Labels" })
   if (detail.labels.length === 0) {
-    rows.push({ color: MACCHIATO.subtext0, text: "None" })
+    rows.push({ color: theme.subtext0, text: "None" })
   } else {
     for (const label of detail.labels) {
-      pushWrappedRows(rows, label.name, width, label.color ?? MACCHIATO.text)
+      pushWrappedRows(rows, label.name, width, label.color ?? theme.text)
     }
   }
 
@@ -110,23 +111,23 @@ function formatUnresolvedReviewThreadCount(count: number | undefined) {
   return count === undefined ? "Unavailable" : pluralize(count, "comment")
 }
 
-function getUnresolvedReviewThreadCountColor(count: number | undefined) {
+function getUnresolvedReviewThreadCountColor(count: number | undefined, theme: AppTheme) {
   if (count === undefined) {
-    return MACCHIATO.subtext0
+    return theme.subtext0
   }
-  return count > 0 ? MACCHIATO.yellow : MACCHIATO.green
+  return count > 0 ? theme.yellow : theme.green
 }
 
-function getReviewerStateColor(state: string) {
+function getReviewerStateColor(state: string, theme: AppTheme) {
   const normalized = normalizeGitHubState(state)
   if (normalized === "CHANGES_REQUESTED") {
-    return MACCHIATO.red
+    return theme.red
   }
   if (normalized === "APPROVED") {
-    return MACCHIATO.green
+    return theme.green
   }
   if (normalized === "REQUESTED") {
-    return MACCHIATO.yellow
+    return theme.yellow
   }
-  return MACCHIATO.text
+  return theme.text
 }

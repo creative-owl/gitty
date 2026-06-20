@@ -18,16 +18,19 @@ import { openGitRepository } from "../features/repositories/model/repositories"
 import type { RepositoryView } from "../features/repositories/model/types"
 import {
   getPersistableWorkspacePaths,
+  saveWorkspaceTheme,
   saveWorkspacePaths,
 } from "../features/repositories/model/workspaces"
 import { RepositorySidebar } from "../features/repository-sidebar/ui/RepositorySidebar"
+import { getThemeIndex, THEME_NAMES } from "../features/theme-picker/model/themes"
+import { ThemePickerPopup } from "../features/theme-picker/ui/ThemePickerPopup"
 import {
   copyTextToClipboard,
   formatCopiedSelectionStatus,
   openExternalUrl,
 } from "../shared/lib/platform"
 import { fitText, pluralize } from "../shared/lib/text"
-import { MACCHIATO } from "../shared/theme"
+import { AppThemeContext, getAppTheme } from "../shared/theme"
 import { StatusOverlay, type OpenRepositoryStatus } from "../widgets/status-overlay/StatusOverlay"
 import type { ActivePane } from "./model/types"
 
@@ -40,7 +43,7 @@ export function DiffApp({
   initialRepositories,
   persistWorkspaces,
   staged,
-  theme,
+  theme: initialTheme,
 }: {
   initialRepositories: RepositoryView[]
   persistWorkspaces: boolean
@@ -64,6 +67,9 @@ export function DiffApp({
   const [repositoryPathInput, setRepositoryPathInput] = useState("")
   const [selectedPathSuggestionIndex, setSelectedPathSuggestionIndex] = useState(0)
   const [openPromptError, setOpenPromptError] = useState("")
+  const [theme, setTheme] = useState<HunkDiffThemeName>(initialTheme)
+  const [isThemePickerVisible, setThemePickerVisible] = useState(false)
+  const [selectedThemeIndex, setSelectedThemeIndex] = useState(() => getThemeIndex(initialTheme))
   const [status, setStatus] = useState<OpenRepositoryStatus>()
   const activeRepositoryId = activePane.repositoryId
 
@@ -88,10 +94,12 @@ export function DiffApp({
   )
   const gitPaneWidth = Math.max(1, shellWidth - repositoryWidth - 1)
   const headerWidth = shellWidth
-  const commandText = `${pluralize(repositories.length, "repository", "repositories")}  |  o open repository  |  tab/click repo or PR  |  q quit`
+  const commandText = `${pluralize(repositories.length, "repository", "repositories")}  |  o open repository  |  t theme  |  tab/click repo or PR  |  q quit`
   const pathSuggestions = useMemo(() => createPathSuggestions(repositoryPathInput), [repositoryPathInput])
   const normalizedPathSuggestionIndex =
     pathSuggestions.length > 0 ? Math.min(selectedPathSuggestionIndex, pathSuggestions.length - 1) : 0
+  const themePickerTop = Math.max(1, Math.min(Math.max(1, terminal.height - THEME_NAMES.length - 5), 4))
+  const appTheme = useMemo(() => getAppTheme(theme), [theme])
 
   useEffect(() => {
     persistWorkspaceRepositories(repositories)
@@ -241,6 +249,7 @@ export function DiffApp({
     setSelectedPathSuggestionIndex(0)
     setOpenPromptError("")
     setStatus(undefined)
+    setThemePickerVisible(false)
     setOpenPromptVisible(true)
   }
 
@@ -388,6 +397,43 @@ export function DiffApp({
     }
   }
 
+  function showThemePicker() {
+    setOpenPromptVisible(false)
+    setOpenPromptError("")
+    setSelectedThemeIndex(getThemeIndex(theme))
+    setStatus(undefined)
+    setThemePickerVisible(true)
+  }
+
+  function cancelThemePicker() {
+    setThemePickerVisible(false)
+    setSelectedThemeIndex(getThemeIndex(theme))
+  }
+
+  function moveThemeSelection(delta: number) {
+    setSelectedThemeIndex((currentIndex) => {
+      const nextIndex = currentIndex + delta
+      return (nextIndex + THEME_NAMES.length) % THEME_NAMES.length
+    })
+  }
+
+  function selectTheme(nextTheme: HunkDiffThemeName) {
+    setTheme(nextTheme)
+    setSelectedThemeIndex(getThemeIndex(nextTheme))
+    setThemePickerVisible(false)
+    const saved = saveWorkspaceTheme(nextTheme)
+    setStatus({
+      text: saved ? `Theme saved: ${nextTheme}.` : `Theme changed: ${nextTheme}.`,
+    })
+  }
+
+  function submitSelectedTheme() {
+    const nextTheme = THEME_NAMES[selectedThemeIndex]
+    if (nextTheme) {
+      selectTheme(nextTheme)
+    }
+  }
+
   function persistWorkspaceRepositories(nextRepositories: RepositoryView[]) {
     if (!persistWorkspaces) {
       return
@@ -434,6 +480,33 @@ export function DiffApp({
       return
     }
 
+    if (isThemePickerVisible) {
+      if (name === "escape") {
+        key.preventDefault()
+        cancelThemePicker()
+        return
+      }
+
+      if (name === "up" || name === "kpup") {
+        key.preventDefault()
+        moveThemeSelection(-1)
+        return
+      }
+
+      if (name === "down" || name === "kpdown") {
+        key.preventDefault()
+        moveThemeSelection(1)
+        return
+      }
+
+      if (name === "return" || name === "enter" || sequence === "\r") {
+        key.preventDefault()
+        submitSelectedTheme()
+        return
+      }
+      return
+    }
+
     if (name === "escape" || name === "q" || sequence === "q") {
       persistWorkspaceRepositories(repositories)
       renderer.destroy()
@@ -445,80 +518,96 @@ export function DiffApp({
       return
     }
 
+    if (name === "t" || sequence === "t") {
+      showThemePicker()
+      return
+    }
+
     if (name === "tab" || sequence === "\t") {
       selectNextRepository()
     }
   })
 
   return (
-    <box
-      style={{
-        width: "100%",
-        height: "100%",
-        flexDirection: "column",
-        paddingLeft: 1,
-        paddingRight: 1,
-        paddingTop: 1,
-        paddingBottom: 1,
-        position: "relative",
-        backgroundColor: MACCHIATO.base,
-      }}
-    >
-      <box style={{ width: "100%", height: 1 }}>
-        <text fg={MACCHIATO.lavender}>{fitText("Gitty", headerWidth)}</text>
-      </box>
-      <box style={{ width: "100%", height: 1 }}>
-        <text fg={MACCHIATO.subtext0}>{fitText(commandText, headerWidth)}</text>
-      </box>
-      <box style={{ height: 1 }} />
-      {isOpenPromptVisible ? (
-        <>
-          <OpenRepositoryPrompt
-            message={openPromptError}
-            onCompleteSuggestion={updateRepositoryPathInput}
-            onInput={updateRepositoryPathInput}
-            onSubmit={submitOpenRepository}
-            selectedSuggestionIndex={normalizedPathSuggestionIndex}
-            suggestions={pathSuggestions}
-            value={repositoryPathInput}
+    <AppThemeContext.Provider value={appTheme}>
+      <box
+        style={{
+          width: "100%",
+          height: "100%",
+          flexDirection: "column",
+          paddingLeft: 1,
+          paddingRight: 1,
+          paddingTop: 1,
+          paddingBottom: 1,
+          position: "relative",
+          backgroundColor: appTheme.base,
+        }}
+      >
+        <box style={{ width: "100%", height: 1 }}>
+          <text fg={appTheme.lavender}>{fitText("Gitty", headerWidth)}</text>
+        </box>
+        <box style={{ width: "100%", height: 1 }}>
+          <text fg={appTheme.subtext0}>{fitText(commandText, headerWidth)}</text>
+        </box>
+        <box style={{ height: 1 }} />
+        {isOpenPromptVisible ? (
+          <>
+            <OpenRepositoryPrompt
+              message={openPromptError}
+              onCompleteSuggestion={updateRepositoryPathInput}
+              onInput={updateRepositoryPathInput}
+              onSubmit={submitOpenRepository}
+              selectedSuggestionIndex={normalizedPathSuggestionIndex}
+              suggestions={pathSuggestions}
+              value={repositoryPathInput}
+              width={headerWidth}
+            />
+            <box style={{ height: 1 }} />
+          </>
+        ) : null}
+        <box style={{ width: "100%", flexGrow: 1, flexDirection: "row" }}>
+          <RepositorySidebar
+            activePane={activePane}
+            activeRepositoryId={activeRepository?.id ?? ""}
+            onCloseRepository={closeRepository}
+            onOpenRepository={showOpenRepositoryPrompt}
+            onSelectPullRequest={selectPullRequest}
+            onSelectWorkingChanges={selectWorkingChanges}
+            width={repositoryWidth}
+            repositories={repositories}
+          />
+          <box style={{ width: 1, height: "100%" }} />
+          {activePane.kind === "pull-request" && activeRepository ? (
+            <PullRequestPane
+              detailState={activePullRequestDetailState}
+              diffState={activePullRequestDiffState}
+              onOpenUrl={openPullRequestUrl}
+              pullRequestNumber={activePane.pullRequestNumber}
+              summary={activePullRequestSummary}
+              theme={theme}
+              width={gitPaneWidth}
+            />
+          ) : (
+            <GitPane
+              onSelectionChange={setActiveSelection}
+              selection={selection}
+              theme={theme}
+              width={gitPaneWidth}
+              repository={activeRepository}
+            />
+          )}
+        </box>
+        <StatusOverlay status={status} width={headerWidth} />
+        {isThemePickerVisible ? (
+          <ThemePickerPopup
+            currentTheme={theme}
+            onSelectTheme={selectTheme}
+            selectedThemeIndex={selectedThemeIndex}
+            top={themePickerTop}
             width={headerWidth}
           />
-          <box style={{ height: 1 }} />
-        </>
-      ) : null}
-      <box style={{ width: "100%", flexGrow: 1, flexDirection: "row" }}>
-        <RepositorySidebar
-          activePane={activePane}
-          activeRepositoryId={activeRepository?.id ?? ""}
-          onCloseRepository={closeRepository}
-          onOpenRepository={showOpenRepositoryPrompt}
-          onSelectPullRequest={selectPullRequest}
-          onSelectWorkingChanges={selectWorkingChanges}
-          width={repositoryWidth}
-          repositories={repositories}
-        />
-        <box style={{ width: 1, height: "100%" }} />
-        {activePane.kind === "pull-request" && activeRepository ? (
-          <PullRequestPane
-            detailState={activePullRequestDetailState}
-            diffState={activePullRequestDiffState}
-            onOpenUrl={openPullRequestUrl}
-            pullRequestNumber={activePane.pullRequestNumber}
-            summary={activePullRequestSummary}
-            theme={theme}
-            width={gitPaneWidth}
-          />
-        ) : (
-          <GitPane
-            onSelectionChange={setActiveSelection}
-            selection={selection}
-            theme={theme}
-            width={gitPaneWidth}
-            repository={activeRepository}
-          />
-        )}
+        ) : null}
       </box>
-      <StatusOverlay status={status} width={headerWidth} />
-    </box>
+    </AppThemeContext.Provider>
   )
 }

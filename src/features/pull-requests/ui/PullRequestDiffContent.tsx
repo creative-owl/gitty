@@ -2,7 +2,7 @@ import { HunkReviewStream, type HunkDiffFile, type HunkDiffSelection, type HunkD
 import { useEffect, useState } from "react"
 import { defaultSelection, normalizeSelection } from "../../diff/model/diff"
 import { fitText } from "../../../shared/lib/text"
-import { MACCHIATO } from "../../../shared/theme"
+import { useAppTheme } from "../../../shared/theme"
 import type { PullRequestDiffState } from "../model/types"
 
 const EMPTY_DIFF_FILES: HunkDiffFile[] = []
@@ -16,6 +16,7 @@ export function PullRequestDiffContent({
   theme: HunkDiffThemeName
   width: number
 }) {
+  const appTheme = useAppTheme()
   const files = diffState?.status === "loaded" ? diffState.files : EMPTY_DIFF_FILES
   const [selection, setSelection] = useState<HunkDiffSelection>(() => defaultSelection(files))
   const normalizedSelection = normalizeSelection(files, selection)
@@ -27,7 +28,7 @@ export function PullRequestDiffContent({
   if (!diffState || diffState.status === "loading") {
     return (
       <box style={{ width: "100%", height: 3, paddingLeft: 1, paddingTop: 1 }}>
-        <text fg={MACCHIATO.subtext0}>{fitText("Loading pull request diff...", Math.max(1, width - 2))}</text>
+        <text fg={appTheme.subtext0}>{fitText("Loading pull request diff...", Math.max(1, width - 2))}</text>
       </box>
     )
   }
@@ -35,7 +36,7 @@ export function PullRequestDiffContent({
   if (diffState.status === "unavailable") {
     return (
       <box style={{ width: "100%", height: 3, paddingLeft: 1, paddingTop: 1 }}>
-        <text fg={MACCHIATO.red}>{fitText(diffState.message, Math.max(1, width - 2))}</text>
+        <text fg={appTheme.red}>{fitText(diffState.message, Math.max(1, width - 2))}</text>
       </box>
     )
   }
@@ -43,7 +44,7 @@ export function PullRequestDiffContent({
   if (files.length === 0) {
     return (
       <box style={{ width: "100%", height: 3, paddingLeft: 1, paddingTop: 1 }}>
-        <text fg={MACCHIATO.subtext0}>{fitText("No diff files in this pull request.", Math.max(1, width - 2))}</text>
+        <text fg={appTheme.subtext0}>{fitText("No diff files in this pull request.", Math.max(1, width - 2))}</text>
       </box>
     )
   }

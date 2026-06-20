@@ -1,13 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
+import { HUNK_DIFF_THEME_NAMES, type HunkDiffThemeName } from "hunkdiff/opentui"
 import { asArray, isRecord, readString } from "../../../shared/lib/record"
 import type { RepositoryView } from "./types"
 
-const WORKSPACE_STATE_VERSION = 1
+const WORKSPACE_STATE_VERSION = 2
 
 type WorkspaceState = {
   paths: string[]
+  theme?: HunkDiffThemeName
 }
 
 export function readSavedWorkspaceState(): WorkspaceState | undefined {
@@ -20,6 +22,7 @@ export function readSavedWorkspaceState(): WorkspaceState | undefined {
     const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown
     return {
       paths: parseWorkspacePaths(parsed),
+      theme: parseWorkspaceTheme(parsed),
     }
   } catch {
     return undefined
@@ -27,13 +30,25 @@ export function readSavedWorkspaceState(): WorkspaceState | undefined {
 }
 
 export function saveWorkspacePaths(paths: string[]) {
+  return saveWorkspaceState({ paths })
+}
+
+export function saveWorkspaceTheme(theme: HunkDiffThemeName) {
+  return saveWorkspaceState({ theme })
+}
+
+function saveWorkspaceState(nextState: Partial<WorkspaceState>) {
   try {
     const filePath = getWorkspaceStateFilePath()
-    const uniquePaths = uniqueNonEmptyStrings(paths)
+    const previousState = readSavedWorkspaceState()
+    const paths = "paths" in nextState ? nextState.paths : previousState?.paths
+    const theme = "theme" in nextState ? nextState.theme : previousState?.theme
+    const uniquePaths = uniqueNonEmptyStrings(paths ?? [])
     const payload = `${JSON.stringify(
       {
         version: WORKSPACE_STATE_VERSION,
         workspaces: uniquePaths.map((path) => ({ path })),
+        ...(theme ? { theme } : {}),
       },
       null,
       2,
@@ -81,10 +96,21 @@ function getWorkspaceStateDirectory() {
 
 function parseWorkspacePaths(value: unknown) {
   const workspaceValues = isRecord(value) ? asArray(value.workspaces) : asArray(value)
-  return uniqueNonEmptyStrings(workspaceValues.flatMap((workspace) => {
-    const path = readWorkspacePath(workspace)
-    return path ? [path] : []
-  }))
+  return uniqueNonEmptyStrings(
+    workspaceValues.flatMap((workspace) => {
+      const path = readWorkspacePath(workspace)
+      return path ? [path] : []
+    }),
+  )
+}
+
+function parseWorkspaceTheme(value: unknown): HunkDiffThemeName | undefined {
+  if (!isRecord(value)) {
+    return undefined
+  }
+
+  const theme = readString(value.theme)
+  return isTheme(theme) ? theme : undefined
 }
 
 function readWorkspacePath(value: unknown) {
@@ -111,4 +137,8 @@ function uniqueNonEmptyStrings(values: string[]) {
   }
 
   return uniqueValues
+}
+
+function isTheme(value: string): value is HunkDiffThemeName {
+  return HUNK_DIFF_THEME_NAMES.includes(value as HunkDiffThemeName)
 }
