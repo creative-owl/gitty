@@ -8,7 +8,9 @@
 
 # Gitty
 
-A Bun + OpenTUI terminal diff viewer built with [`hunkdiff/opentui`](https://www.npmjs.com/package/hunkdiff) components and inspired by [Hunk](https://github.com/modem-dev/hunk).
+A Bun + OpenTUI review workspace for local git changes and GitHub pull requests. Gitty shows working tree, staged, patch, and stdin diffs, and can also browse open GitHub PRs from your repositories with discussion, metadata, and diff views.
+
+It is built with [`hunkdiff/opentui`](https://www.npmjs.com/package/hunkdiff) components and inspired by [Hunk](https://github.com/modem-dev/hunk).
 
 ## Local Development
 
@@ -17,7 +19,7 @@ bun install
 bun run start
 ```
 
-With no input, Gitty shows the current `git diff` plus untracked files when changes exist. If the repo is clean, the repository opens with an empty Working changes view.
+With no input, Gitty opens the current repository. The `Working changes` view shows the current `git diff` plus untracked files when changes exist. If the repo is clean, the repository opens with an empty Working changes view.
 
 You can add multiple git repositories, pass a patch file, read from stdin, or view staged changes:
 
@@ -28,18 +30,21 @@ git diff | gitty
 gitty --staged
 ```
 
+For GitHub repositories, Gitty uses the GitHub CLI when available to list open PRs authored by you and PRs requesting your review. Selecting a PR opens a review view with Discussion and Diff tabs, rendered PR description Markdown, status checks, review state, reviewers, assignees, labels, and unresolved comment count.
+
 Inside the TUI:
 
 - `o` opens another git repository by path. Relative paths and `~` are supported.
 - In the open repository dialog, use `Up`/`Down` to pick a directory and `Tab` to complete it.
 - `Tab` cycles repositories.
 - Click any repository in the sidebar to switch to it.
-- Click a PR in the sidebar to open its description. Click the PR URL in the detail header to open it in your browser.
+- Click a PR in the sidebar to open its review view. Click the PR URL in the detail header to open it in your browser.
+- Click the `Discussion` and `Diff` tabs in a PR view to switch between the rendered PR body and the pull request patch.
 - Click the `x` beside a repository in the sidebar to close it.
 - Line wrapping is always on.
 - Status messages appear in a bottom-right overlay so command controls stay visible.
 - The left sidebar lists repositories, each with a `Working changes` menu item.
-- For GitHub repositories, the sidebar also lists open PRs split into `Your pr's` and `Needs your review`, with merge readiness dots and changes-requested notices. PR detail views render a prominent plain title, the description as Markdown in its own block, and reviewers, assignees, labels, and unresolved comment count in a right sidebar.
+- For GitHub repositories, the sidebar also lists open PRs split into `Your pr's` and `Needs your review`, with check-status dots and changes-requested notices.
 - The git diff UI lives inside a swappable pane and always renders split diffs.
 - `q`, `Esc`, or `Ctrl+C` exits.
 
