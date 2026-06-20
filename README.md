@@ -17,7 +17,10 @@ It is built with [`hunkdiff/opentui`](https://www.npmjs.com/package/hunkdiff) co
 ```bash
 bun install
 bun run start
+bun run check
 ```
+
+Run `bun run check` before opening a PR; it typechecks the app and runs the Bun test suite.
 
 With no input, Gitty opens the current repository. The `Working changes` view shows the current `git diff` plus untracked files when changes exist. If the repo is clean, the repository opens with an empty Working changes view.
 
