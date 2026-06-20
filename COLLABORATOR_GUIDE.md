@@ -48,6 +48,10 @@ If changes are requested, address them promptly. If you cannot make the changes,
 
 If someone reports a suspected vulnerability in a public issue, do not discuss specifics in the thread. Redirect them to the process described in [SECURITY.md](./SECURITY.md) and close or hide the issue as appropriate.
 
+## Release PRs
+
+Maintainers can create a release preparation PR from the `Create release PR` GitHub Actions workflow. Choose the release type, set the prerelease option only for beta releases, and let the workflow run the Bun checks before opening the release PR.
+
 ## What collaborators should not do
 
 - Add runtime dependencies without discussion.
