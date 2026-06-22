@@ -1,4 +1,4 @@
-import { HunkReviewStream, type HunkDiffFile, type HunkDiffSelection, type HunkDiffThemeName } from "hunkdiff/opentui"
+import { HunkReviewStream, type HunkDiffFile, type HunkDiffSelection, type HunkDiffThemeInput } from "hunkdiff/opentui"
 import { useEffect, useState } from "react"
 import { defaultSelection, normalizeSelection } from "../../diff/model/diff"
 import { fitText } from "../../../shared/lib/text"
@@ -13,7 +13,7 @@ export function PullRequestDiffContent({
   width,
 }: {
   diffState?: PullRequestDiffState
-  theme: HunkDiffThemeName
+  theme: HunkDiffThemeInput
   width: number
 }) {
   const appTheme = useAppTheme()

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import type { HunkDiffThemeName } from "hunkdiff/opentui"
+import type { HunkDiffThemeInput } from "hunkdiff/opentui"
 import type {
   PullRequestDetailState,
   PullRequestDiffState,
@@ -27,7 +27,7 @@ export function PullRequestPane({
   onOpenUrl: (url: string) => void
   pullRequestNumber: number
   summary?: PullRequestSummary
-  theme: HunkDiffThemeName
+  theme: HunkDiffThemeInput
   width: number
 }) {
   const [activeTab, setActiveTab] = useState<PullRequestTab>("discussion")

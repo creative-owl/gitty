@@ -1,15 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { HUNK_DIFF_THEME_NAMES, type HunkDiffThemeName } from "hunkdiff/opentui"
 import { asArray, isRecord, readString } from "../../../shared/lib/record"
+import { isThemeName, type ThemeName } from "../../../shared/theme"
 import type { RepositoryView } from "./types"
 
 const WORKSPACE_STATE_VERSION = 2
 
 type WorkspaceState = {
   paths: string[]
-  theme?: HunkDiffThemeName
+  theme?: ThemeName
 }
 
 export function readSavedWorkspaceState(): WorkspaceState | undefined {
@@ -33,7 +33,7 @@ export function saveWorkspacePaths(paths: string[]) {
   return saveWorkspaceState({ paths })
 }
 
-export function saveWorkspaceTheme(theme: HunkDiffThemeName) {
+export function saveWorkspaceTheme(theme: ThemeName) {
   return saveWorkspaceState({ theme })
 }
 
@@ -104,13 +104,13 @@ function parseWorkspacePaths(value: unknown) {
   )
 }
 
-function parseWorkspaceTheme(value: unknown): HunkDiffThemeName | undefined {
+function parseWorkspaceTheme(value: unknown): ThemeName | undefined {
   if (!isRecord(value)) {
     return undefined
   }
 
   const theme = readString(value.theme)
-  return isTheme(theme) ? theme : undefined
+  return isThemeName(theme) ? theme : undefined
 }
 
 function readWorkspacePath(value: unknown) {
@@ -137,8 +137,4 @@ function uniqueNonEmptyStrings(values: string[]) {
   }
 
   return uniqueValues
-}
-
-function isTheme(value: string): value is HunkDiffThemeName {
-  return HUNK_DIFF_THEME_NAMES.includes(value as HunkDiffThemeName)
 }

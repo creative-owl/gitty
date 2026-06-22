@@ -1,14 +1,11 @@
-import { HUNK_DIFF_THEME_NAMES, type HunkDiffThemeName } from "hunkdiff/opentui"
+import { getAppTheme, THEME_NAMES, type ThemeName } from "../../../shared/theme"
 
-export const THEME_NAMES = [...HUNK_DIFF_THEME_NAMES]
+export { THEME_NAMES }
 
-export function getThemeIndex(theme: HunkDiffThemeName) {
+export function getThemeIndex(theme: ThemeName) {
   return Math.max(0, THEME_NAMES.indexOf(theme))
 }
 
-export function formatThemeName(theme: HunkDiffThemeName) {
-  return theme
-    .split("-")
-    .map((part) => (part ? `${part[0]?.toUpperCase()}${part.slice(1)}` : part))
-    .join(" ")
+export function formatThemeName(theme: ThemeName) {
+  return getAppTheme(theme).label
 }
