@@ -1,3 +1,5 @@
+import { useMemo } from "react"
+import type { BoxProps, TextProps } from "@opentui/react"
 import { GitPane } from "../features/diff/ui/GitPane"
 import { OpenRepositoryPrompt } from "../features/open-repository/ui/OpenRepositoryPrompt"
 import { PullRequestPane } from "../features/pull-requests/ui/PullRequestPane"
@@ -6,6 +8,20 @@ import { ThemePickerPopup } from "../features/theme-picker/ui/ThemePickerPopup"
 import { fitText } from "../shared/lib/text"
 import { StatusOverlay } from "../widgets/status-overlay/StatusOverlay"
 import type { DiffAppController } from "./useDiffAppController"
+
+type BoxStyle = NonNullable<BoxProps["style"]>
+type TextStyle = NonNullable<TextProps["style"]>
+
+const APP_CONTAINER_LAYOUT_STYLE = {
+  width: "100%",
+  height: "100%",
+  flexDirection: "column",
+  paddingLeft: 1,
+  paddingRight: 1,
+  paddingTop: 1,
+  paddingBottom: 1,
+  position: "relative",
+} satisfies BoxStyle
 
 export function DiffAppView({ controller }: { controller: DiffAppController }) {
   const {
@@ -44,25 +60,23 @@ export function DiffAppView({ controller }: { controller: DiffAppController }) {
     updateRepositoryPathInput,
   } = controller
 
+  const appContainerStyle = useMemo(
+    () => ({
+      ...APP_CONTAINER_LAYOUT_STYLE,
+      backgroundColor: appTheme.base,
+    }),
+    [appTheme.base],
+  )
+  const titleTextStyle = useMemo<TextStyle>(() => ({ fg: appTheme.lavender }), [appTheme.lavender])
+  const commandTextStyle = useMemo<TextStyle>(() => ({ fg: appTheme.subtext0 }), [appTheme.subtext0])
+
   return (
-    <box
-      style={{
-        width: "100%",
-        height: "100%",
-        flexDirection: "column",
-        paddingLeft: 1,
-        paddingRight: 1,
-        paddingTop: 1,
-        paddingBottom: 1,
-        position: "relative",
-        backgroundColor: appTheme.base,
-      }}
-    >
+    <box style={appContainerStyle}>
       <box style={{ width: "100%", height: 1 }}>
-        <text fg={appTheme.lavender}>{fitText("Gitty", headerWidth)}</text>
+        <text style={titleTextStyle}>{fitText("Gitty", headerWidth)}</text>
       </box>
       <box style={{ width: "100%", height: 1 }}>
-        <text fg={appTheme.subtext0}>{fitText(commandText, headerWidth)}</text>
+        <text style={commandTextStyle}>{fitText(commandText, headerWidth)}</text>
       </box>
       <box style={{ height: 1 }} />
       {isOpenPromptVisible ? (
