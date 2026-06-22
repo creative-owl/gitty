@@ -471,9 +471,10 @@ export function DiffApp({
   useKeyboard((key) => {
     const name = key.name?.toLowerCase() ?? ""
     const sequence = key.sequence?.toLowerCase()
+    const isEscape = name === "escape" || sequence === "\x1B"
 
     if (isOpenPromptVisible) {
-      if (name === "escape") {
+      if (isEscape) {
         key.preventDefault()
         cancelOpenRepositoryPrompt()
         return
@@ -500,7 +501,7 @@ export function DiffApp({
     }
 
     if (isThemePickerVisible) {
-      if (name === "escape") {
+      if (isEscape) {
         key.preventDefault()
         cancelThemePicker()
         return
@@ -526,7 +527,7 @@ export function DiffApp({
       return
     }
 
-    if (name === "escape" || name === "q" || sequence === "q") {
+    if (isEscape || name === "q" || sequence === "q") {
       persistWorkspaceRepositories(repositories)
       renderer.destroy()
       return
