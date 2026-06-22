@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: 1.3.14
+
+jobs:
+  checks:
+    name: Release checks
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          no-cache: true
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify tag matches package version
+        run: |
+          version="$(bun --eval 'const fs = require("node:fs"); console.log(JSON.parse(fs.readFileSync("package.json", "utf8")).version);')"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${version}."
+            exit 1
+          fi
+
+      - name: Run typecheck
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun test
+
+      - name: Check installer syntax
+        run: sh -n install.sh
+
+  create-release:
+    name: Create GitHub release
+    needs: checks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --draft=false --prerelease=false
+          else
+            gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --verify-tag --title "${GITHUB_REF_NAME}" --generate-notes
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: create-release
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-15
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: linux-x64
+            runner: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          no-cache: true
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build release archive
+        run: bun run release:build --target "${{ matrix.target }}"
+
+      - name: Upload release archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            "dist/gitty-${{ matrix.target }}.tar.gz" \
+            "dist/gitty-${{ matrix.target }}.tar.gz.sha256" \
+            --clobber
+
+  publish-checksums:
+    name: Publish checksums and Homebrew formula
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          no-cache: true
+
+      - name: Download target checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "${GITHUB_REF_NAME}" --pattern "*.sha256" --dir dist --clobber
+          cat dist/*.sha256 > dist/checksums.txt
+
+      - name: Upload checksum manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/checksums.txt --clobber
+
+      - name: Render Homebrew formula
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bun run scripts/render-homebrew-formula.ts --version "$version" --checksums dist/checksums.txt --out dist/gitty.rb
+
+      - name: Upload Homebrew formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/gitty.rb --clobber
+
+      - name: Publish Homebrew tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.HOMEBREW_TAP_TOKEN }}
+        run: |
+          tap_dir="${RUNNER_TEMP}/homebrew-c8o"
+          gh repo clone creative-owl/homebrew-c8o "$tap_dir"
+          mkdir -p "$tap_dir/Formula"
+          cp dist/gitty.rb "$tap_dir/Formula/gitty.rb"
+          cd "$tap_dir"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/gitty.rb
+          if git diff --cached --quiet; then
+            echo "Homebrew formula unchanged."
+            exit 0
+          fi
+          git commit -m "Update gitty to ${GITHUB_REF_NAME}"
+          git push
+
+      - name: Skip Homebrew tap publish
+        if: env.HOMEBREW_TAP_TOKEN == ''
+        run: echo "HOMEBREW_TAP_TOKEN is not configured; skipping tap publish."

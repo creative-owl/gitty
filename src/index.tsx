@@ -1,11 +1,8 @@
 #!/usr/bin/env bun
 
-import { createCliRenderer } from "@opentui/core"
-import { createRoot } from "@opentui/react"
+import { initializeApp } from "./app/bootstrap"
 import { parseCliOptions, usage } from "./app/cli"
-import { DiffApp } from "./app/DiffApp"
-import { resolveRepositories } from "./features/repositories/model/repositories"
-import { isPersistableWorkspace, readSavedWorkspaceState } from "./features/repositories/model/workspaces"
+import { VERSION } from "./app/version"
 
 async function main() {
   const options = parseCliOptions(Bun.argv.slice(2))
@@ -14,6 +11,20 @@ async function main() {
     process.stdout.write(`${usage()}\n`)
     return
   }
+
+  if (options.version) {
+    process.stdout.write(`gitty ${VERSION}\n`)
+    return
+  }
+
+  const {
+    createCliRenderer,
+    createRoot,
+    DiffApp,
+    resolveRepositories,
+    isPersistableWorkspace,
+    readSavedWorkspaceState,
+  } = await initializeApp()
 
   const savedWorkspaceState = readSavedWorkspaceState()
   const repositories = await resolveRepositories(options)

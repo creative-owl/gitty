@@ -7,6 +7,7 @@ export type CliOptions = {
   sample: boolean
   theme: ThemeName
   themeProvided: boolean
+  version: boolean
   repositoryDirs: string[]
 }
 
@@ -27,6 +28,7 @@ Options:
   --sample            Show the built-in sample diff.
   --theme <name>      ${THEME_NAMES.join(", ")}
                       Defaults to ${DEFAULT_THEME}.
+  -V, --version       Show the Gitty version.
   -h, --help          Show this help text.`
 }
 
@@ -37,6 +39,7 @@ export function parseCliOptions(args: string[]): CliOptions {
     sample: false,
     theme: DEFAULT_THEME,
     themeProvided: false,
+    version: false,
     repositoryDirs: [],
   }
 
@@ -49,6 +52,11 @@ export function parseCliOptions(args: string[]): CliOptions {
 
     if (arg === "-h" || arg === "--help") {
       options.help = true
+      continue
+    }
+
+    if (arg === "-V" || arg === "--version") {
+      options.version = true
       continue
     }
 
