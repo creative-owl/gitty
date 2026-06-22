@@ -33,7 +33,7 @@ jobs:
           no-cache: true
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Verify tag matches package version
         run: |
@@ -102,7 +102,7 @@ jobs:
           no-cache: true
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Build release archive
         run: bun run release:build --target "${{ matrix.target }}"
@@ -122,9 +122,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-    env:
-      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -161,10 +158,15 @@ jobs:
         run: gh release upload "${GITHUB_REF_NAME}" dist/gitty.rb --clobber
 
       - name: Publish Homebrew tap
-        if: env.HOMEBREW_TAP_TOKEN != ''
         env:
-          GH_TOKEN: ${{ env.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is not configured; skipping tap publish."
+            exit 0
+          fi
+
           tap_dir="${RUNNER_TEMP}/homebrew-c8o"
           gh repo clone creative-owl/homebrew-c8o "$tap_dir"
           mkdir -p "$tap_dir/Formula"
@@ -179,7 +181,3 @@ jobs:
           fi
           git commit -m "Update gitty to ${GITHUB_REF_NAME}"
           git push
-
-      - name: Skip Homebrew tap publish
-        if: env.HOMEBREW_TAP_TOKEN == ''
-        run: echo "HOMEBREW_TAP_TOKEN is not configured; skipping tap publish."
