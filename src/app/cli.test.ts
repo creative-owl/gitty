@@ -10,6 +10,7 @@ describe("parseCliOptions", () => {
       staged: false,
       theme: DEFAULT_THEME,
       themeProvided: false,
+      version: false,
     })
   })
 
@@ -23,6 +24,16 @@ describe("parseCliOptions", () => {
       staged: true,
       theme: "ghostty-dracula",
       themeProvided: true,
+      version: false,
+    })
+  })
+
+  test("parses version requests", () => {
+    expect(parseCliOptions(["--version"])).toMatchObject({
+      version: true,
+    })
+    expect(parseCliOptions(["-V"])).toMatchObject({
+      version: true,
     })
   })
 
