@@ -43,7 +43,10 @@
     "diff:staged": "bun run src/index.tsx --staged",
     "test": "bun test",
     "check": "bun run typecheck && bun test",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "release:build": "bun run scripts/build-release.ts",
+    "release:build:current": "bun run scripts/build-release.ts --current",
+    "release:formula": "bun run scripts/render-homebrew-formula.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

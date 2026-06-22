@@ -31,3 +31,9 @@ jobs:
 
       - name: Run tests
         run: bun test
+
+      - name: Check installer syntax
+        run: sh -n install.sh
+
+      - name: Build release package
+        run: bun run release:build:current
