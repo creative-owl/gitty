@@ -12,6 +12,29 @@ A Bun + OpenTUI review workspace for local git changes and GitHub pull requests.
 
 It is built with [`hunkdiff/opentui`](https://www.npmjs.com/package/hunkdiff) components and inspired by [Hunk](https://github.com/modem-dev/hunk).
 
+## Installation
+
+Install the latest release with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/creative-owl/gitty/main/install.sh | sh
+```
+
+The installer downloads the matching macOS or Linux release archive, verifies its SHA-256 checksum, and installs `gitty` into `~/.local/bin` by default. You can choose a version or install location:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/creative-owl/gitty/main/install.sh | sh -s -- --version 0.1.0
+curl -fsSL https://raw.githubusercontent.com/creative-owl/gitty/main/install.sh | sh -s -- --prefix /usr/local
+curl -fsSL https://raw.githubusercontent.com/creative-owl/gitty/main/install.sh | GITTY_INSTALL_DIR="$HOME/bin" sh
+```
+
+Homebrew installs use the release formula published to the C8O Homebrew tap:
+
+```bash
+brew tap creative-owl/c8o
+brew install gitty
+```
+
 ## Local Development
 
 ```bash
@@ -65,6 +88,21 @@ This app uses [`hunkdiff/opentui`](https://www.npmjs.com/package/hunkdiff), whic
 Gitty takes inspiration from [Hunk](https://github.com/modem-dev/hunk), the terminal diff review tool that publishes the reusable `hunkdiff` components.
 
 PR sections use the GitHub CLI when available. Run `gh auth login` if the sidebar reports that PRs are unavailable.
+
+## Releases
+
+Tagged releases named `v<package.json version>` run the release workflow. The workflow typechecks, tests, builds standalone Bun binaries for macOS and Linux on native GitHub-hosted runners, uploads compressed release archives plus SHA-256 checksum files, publishes a combined `checksums.txt`, and renders `gitty.rb` for Homebrew.
+
+Supported release assets are:
+
+```text
+gitty-darwin-arm64.tar.gz
+gitty-darwin-x64.tar.gz
+gitty-linux-arm64.tar.gz
+gitty-linux-x64.tar.gz
+```
+
+Configure `HOMEBREW_TAP_TOKEN` with write access to `creative-owl/homebrew-c8o` to publish the generated formula automatically. Without that secret, the workflow still uploads `gitty.rb` to the GitHub release.
 
 ## Attribution
 
