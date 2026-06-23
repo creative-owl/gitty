@@ -47,7 +47,7 @@
     "release:build": "bun run scripts/build-release.ts",
     "release:build:current": "bun run scripts/build-release.ts --current",
     "release:formula": "bun run scripts/render-homebrew-formula.ts",
-    "doctor": "npx react-doctor@latest"
+    "doctor": "bunx react-doctor@latest"
   },
   "devDependencies": {
     "@types/bun": "latest",
