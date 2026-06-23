@@ -112,13 +112,29 @@ export function useDiffAppController({
       }
 
       pullRequestLoadIds.current.add(repository.id)
-      void loadRepositoryPullRequests(repository.path).then((pullRequests) => {
-        setRepositories((currentRepositories) =>
-          currentRepositories.map((currentRepository) =>
-            currentRepository.id === repository.id ? { ...currentRepository, pullRequests } : currentRepository,
-          ),
-        )
-      })
+      void loadRepositoryPullRequests(repository.path)
+        .then((pullRequests) => {
+          setRepositories((currentRepositories) =>
+            currentRepositories.map((currentRepository) =>
+              currentRepository.id === repository.id ? { ...currentRepository, pullRequests } : currentRepository,
+            ),
+          )
+        })
+        .catch((error: unknown) => {
+          setRepositories((currentRepositories) =>
+            currentRepositories.map((currentRepository) =>
+              currentRepository.id === repository.id
+                ? {
+                    ...currentRepository,
+                    pullRequests: {
+                      message: getLoadErrorMessage(error, "Could not load GitHub PRs."),
+                      status: "unavailable",
+                    },
+                  }
+                : currentRepository,
+            ),
+          )
+        })
     }
   }, [repositories])
 
@@ -156,21 +172,40 @@ export function useDiffAppController({
       ),
     )
 
-    void readGhPullRequestDetail(repositoryPath, pullRequestNumber).then((detailState) => {
-      setRepositories((currentRepositories) =>
-        currentRepositories.map((currentRepository) =>
-          currentRepository.id === repositoryId
-            ? {
-                ...currentRepository,
-                pullRequestDetails: {
-                  ...(currentRepository.pullRequestDetails ?? {}),
-                  [pullRequestNumber]: detailState,
-                },
-              }
-            : currentRepository,
-        ),
-      )
-    })
+    void readGhPullRequestDetail(repositoryPath, pullRequestNumber)
+      .then((detailState) => {
+        setRepositories((currentRepositories) =>
+          currentRepositories.map((currentRepository) =>
+            currentRepository.id === repositoryId
+              ? {
+                  ...currentRepository,
+                  pullRequestDetails: {
+                    ...(currentRepository.pullRequestDetails ?? {}),
+                    [pullRequestNumber]: detailState,
+                  },
+                }
+              : currentRepository,
+          ),
+        )
+      })
+      .catch((error: unknown) => {
+        setRepositories((currentRepositories) =>
+          currentRepositories.map((currentRepository) =>
+            currentRepository.id === repositoryId
+              ? {
+                  ...currentRepository,
+                  pullRequestDetails: {
+                    ...(currentRepository.pullRequestDetails ?? {}),
+                    [pullRequestNumber]: {
+                      message: getLoadErrorMessage(error, "Could not load PR details."),
+                      status: "unavailable",
+                    },
+                  },
+                }
+              : currentRepository,
+          ),
+        )
+      })
   }, [activePane, activeRepository, activePullRequestDetailState])
 
   useEffect(() => {
@@ -196,21 +231,40 @@ export function useDiffAppController({
       ),
     )
 
-    void readGhPullRequestDiff(repositoryPath, pullRequestNumber).then((diffState) => {
-      setRepositories((currentRepositories) =>
-        currentRepositories.map((currentRepository) =>
-          currentRepository.id === repositoryId
-            ? {
-                ...currentRepository,
-                pullRequestDiffs: {
-                  ...(currentRepository.pullRequestDiffs ?? {}),
-                  [pullRequestNumber]: diffState,
-                },
-              }
-            : currentRepository,
-        ),
-      )
-    })
+    void readGhPullRequestDiff(repositoryPath, pullRequestNumber)
+      .then((diffState) => {
+        setRepositories((currentRepositories) =>
+          currentRepositories.map((currentRepository) =>
+            currentRepository.id === repositoryId
+              ? {
+                  ...currentRepository,
+                  pullRequestDiffs: {
+                    ...(currentRepository.pullRequestDiffs ?? {}),
+                    [pullRequestNumber]: diffState,
+                  },
+                }
+              : currentRepository,
+          ),
+        )
+      })
+      .catch((error: unknown) => {
+        setRepositories((currentRepositories) =>
+          currentRepositories.map((currentRepository) =>
+            currentRepository.id === repositoryId
+              ? {
+                  ...currentRepository,
+                  pullRequestDiffs: {
+                    ...(currentRepository.pullRequestDiffs ?? {}),
+                    [pullRequestNumber]: {
+                      message: getLoadErrorMessage(error, "Could not load PR diff."),
+                      status: "unavailable",
+                    },
+                  },
+                }
+              : currentRepository,
+          ),
+        )
+      })
   }, [activePane, activeRepository, activePullRequestDiffState])
 
   useEffect(() => {
@@ -583,3 +637,15 @@ export function useDiffAppController({
 }
 
 export type DiffAppController = ReturnType<typeof useDiffAppController>
+
+function getLoadErrorMessage(error: unknown, fallbackMessage: string) {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  if (typeof error === "string" && error) {
+    return error
+  }
+
+  return fallbackMessage
+}
