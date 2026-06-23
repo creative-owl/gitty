@@ -1,0 +1,55 @@
+schema: spec-driven
+
+context: |
+  Gitty is a Bun + OpenTUI terminal review workspace for local git changes and
+  GitHub pull requests. It renders working tree, staged, patch, stdin, and PR
+  diffs using React, @opentui/react, and hunkdiff/opentui.
+
+  Core workflows:
+  - Open one or more git repositories and switch between them in the TUI.
+  - View working or staged changes, patch files, and stdin diffs.
+  - Use the GitHub CLI to list PRs authored by the user or requesting review.
+  - Inspect PR discussion metadata, rendered Markdown, and split diff views.
+  - Persist workspace repository paths and the selected theme.
+
+  Technical stack:
+  - Runtime and package manager: Bun.
+  - UI: React 19 with @opentui/core and @opentui/react.
+  - Diff rendering: hunkdiff/opentui and @pierre/diffs.
+  - Markdown and diagrams: marked and mermaid.
+  - Tests: bun test with TypeScript checked by bunx tsc --noEmit.
+
+  Project structure:
+  - Keep src/index.tsx as a small application bootstrap.
+  - Put app orchestration in src/app.
+  - Put feature-specific model and UI code under src/features/<feature>.
+  - Put reusable helpers, shared UI, fixtures, and theme values under src/shared.
+  - Put cross-feature widgets under src/widgets.
+  - Extract helpers to src/shared only when they are reused across slices.
+
+  Development conventions:
+  - Use Bun for project commands.
+  - Run bun run typecheck after TypeScript or TSX changes.
+  - Run bun test when behavior changes.
+  - Keep refactors scoped to the requested behavior.
+  - Avoid unrelated cleanup in feature changes.
+  - Use Conventional Commits: <type>(optional-scope): <summary>.
+  - Keep commit summaries concise, imperative, and without a trailing period.
+
+rules:
+  proposal:
+    - State the user-facing behavior or maintenance goal first.
+    - Include non-goals when scope boundaries are important.
+    - Call out expected validation commands.
+  specs:
+    - Describe observable TUI behavior and data-state transitions.
+    - Use MUST and SHOULD requirements where acceptance criteria need precision.
+    - Keep implementation details out unless they affect the public contract.
+  design:
+    - Follow the existing feature-sliced src layout and local helper patterns.
+    - Prefer existing model, UI, and shared utilities over new abstractions.
+    - Document any GitHub CLI, filesystem, or terminal-rendering constraints.
+  tasks:
+    - Keep tasks small enough to implement and validate independently.
+    - Include bun run typecheck for TypeScript or TSX changes.
+    - Include bun test for behavior changes or shared logic.
