@@ -58,8 +58,8 @@
   "dependencies": {
     "@opentui/core": "^0.4.1",
     "@opentui/react": "^0.4.1",
-    "@pierre/diffs": "1.2.10",
-    "hunkdiff": "^0.15.3",
+    "@pierre/diffs": "1.2.11",
+    "hunkdiff": "^0.16.0",
     "jsdom": "^29.1.1",
     "marked": "18.0.5",
     "mermaid": "^11.15.0",
